@@ -64,6 +64,10 @@ struct UCXRequest {
 
 class UCXEndpointsPool {
 public:
+  UCXEndpointsPool() {
+      errh_enable_ = GetEnv("BYTEPS_UCX_ERRH_ENABLE", 1);
+  }
+
   void Init(ucp_worker_h worker, Node *node) {
     worker_  = worker;
     my_node_ = node;
@@ -86,16 +90,18 @@ public:
              0);
 
     ucp_ep_params_t ep_params;
-    ep_params.field_mask       = UCP_EP_PARAM_FIELD_FLAGS       |
-                                 UCP_EP_PARAM_FIELD_SOCK_ADDR   |
-                                 UCP_EP_PARAM_FIELD_ERR_HANDLER |
-                                 UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
-    ep_params.err_handler.cb   = ErrorHandlerCb;
-    ep_params.err_handler.arg  = this;
-    ep_params.err_mode         = UCP_ERR_HANDLING_MODE_PEER;
-    ep_params.flags            = UCP_EP_PARAMS_FLAGS_CLIENT_SERVER;
-    ep_params.sockaddr.addr    = remote_addr->ai_addr;
-    ep_params.sockaddr.addrlen = remote_addr->ai_addrlen;
+    ep_params.field_mask        = UCP_EP_PARAM_FIELD_FLAGS |
+                                  UCP_EP_PARAM_FIELD_SOCK_ADDR;
+    ep_params.flags             = UCP_EP_PARAMS_FLAGS_CLIENT_SERVER;
+    ep_params.sockaddr.addr     = remote_addr->ai_addr;
+    ep_params.sockaddr.addrlen  = remote_addr->ai_addrlen;
+    if (errh_enable_) {
+      ep_params.field_mask     |= UCP_EP_PARAM_FIELD_ERR_HANDLER |
+                                  UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
+      ep_params.err_handler.cb  = ErrorHandlerCb;
+      ep_params.err_handler.arg = this;
+      ep_params.err_mode        = UCP_ERR_HANDLING_MODE_PEER;
+    }
 
     ucs_status_t status = ucp_ep_create(worker_, &ep_params, &ep);
     CHECK_STATUS(status) << "ucp_ep_create failed: " << ucs_status_string(status);
@@ -117,11 +123,15 @@ public:
 
   void Create(ucp_conn_request_h conn_request) {
     ucp_ep_params_t ep_params;
-    ep_params.field_mask      = UCP_EP_PARAM_FIELD_ERR_HANDLER |
-                                UCP_EP_PARAM_FIELD_CONN_REQUEST;
-    ep_params.err_handler.cb  = ErrorHandlerCb;
-    ep_params.err_handler.arg = this;
-    ep_params.conn_request    = conn_request;
+    ep_params.field_mask        = UCP_EP_PARAM_FIELD_CONN_REQUEST;
+    ep_params.err_handler.cb    = ErrorHandlerCb;
+    ep_params.err_handler.arg   = this;
+    ep_params.conn_request      = conn_request;
+    if (errh_enable_) {
+      ep_params.field_mask     |= UCP_EP_PARAM_FIELD_ERR_HANDLER;
+      ep_params.err_handler.cb  = ErrorHandlerCb;
+      ep_params.err_handler.arg = this;
+    }
 
     ucp_ep_h ep;
     ucs_status_t status = ucp_ep_create(worker_, &ep_params, &ep);
@@ -236,6 +246,7 @@ public:
   std::mutex                        mu_;
   ucp_worker_h                      worker_;
   Node                              *my_node_;
+  int                               errh_enable_;
 };
 
 class UCXVan : public Van {
