@@ -78,7 +78,7 @@ void Postoffice::Start(int customer_id, const char* argv0, const bool do_barrier
   start_mu_.unlock();
 
   // start van
-  van_->Start(customer_id);
+  van_->Start(customer_id, false);
 
   start_mu_.lock();
   if (init_stage_ == 1) {
