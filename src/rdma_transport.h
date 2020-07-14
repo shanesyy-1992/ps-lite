@@ -34,15 +34,27 @@ struct Endpoint {
   struct rdma_cm_id *cm_id;
   std::shared_ptr<Transport> trans;
 
-  WRContext rx_ctx[kRxDepth];
-
-  WRContext start_ctx[kStartDepth];
-  WRContext reply_ctx[kReplyDepth];
+  int kStartDepth = 128;
+  int kRxDepth = 2048;
+  int kReplyDepth = kRxDepth;
+  WRContext *rx_ctx;
+  WRContext *start_ctx;
+  WRContext *reply_ctx;
 
   ThreadsafeQueue<WRContext *> free_start_ctx;
   ThreadsafeQueue<WRContext *> free_reply_ctx;
 
-  Endpoint() : status(IDLE), node_id(Node::kEmpty), cm_id(nullptr), rx_ctx() {}
+  Endpoint() : status(IDLE), node_id(Node::kEmpty), cm_id(nullptr), rx_ctx() {
+    auto byteps_rx_depth = Environment::Get()->find("BYTEPS_RDMA_RX_DEPTH");
+    auto byteps_start_depth = Environment::Get()->find("BYTEPS_RDMA_START_DEPTH");
+    kStartDepth = byteps_start_depth ? atoi(byteps_start_depth) : kStartDepth;
+    kRxDepth = byteps_rx_depth ? atoi(byteps_rx_depth) : kRxDepth;
+    kReplyDepth = kRxDepth;
+
+    start_ctx = new WRContext[kStartDepth];
+    reply_ctx = new WRContext[kReplyDepth];
+    rx_ctx = new WRContext[kRxDepth];
+  }
 
   ~Endpoint() {
     for (int i = 0; i < kRxDepth; ++i) {
@@ -92,7 +104,9 @@ struct Endpoint {
       ib_malloc((void**) &buf, kMempoolChunkSize);
       CHECK(buf);
       struct ibv_mr *mr = ibv_reg_mr(pd, buf, kMempoolChunkSize, 0);
-      CHECK(mr);
+      CHECK(mr) << "ibv_reg_mr failed: " << strerror(errno) 
+          << "\nYou can try to reduce BYTEPS_RDMA_START_DEPTH (default 128)"
+          << " or BYTEPS_RDMA_RX_DEPTH (default 2048)";
 
       ctx[i].type = type;
       ctx[i].buffer = mr;
@@ -121,13 +135,15 @@ struct Endpoint {
     InitSendContextHelper(pd, reply_ctx, &free_reply_ctx, kReplyDepth,
                           kRendezvousReplyContext);
 
-    for (size_t i = 0; i < kRxDepth; ++i) {
+    for (int i = 0; i < kRxDepth; ++i) {
       void *buf;
       ib_malloc((void**) &buf, kMempoolChunkSize);
       CHECK(buf);
       struct ibv_mr *mr =
           ibv_reg_mr(pd, buf, kMempoolChunkSize, IBV_ACCESS_LOCAL_WRITE);
-      CHECK(mr);
+      CHECK(mr) << "ibv_reg_mr failed: " << strerror(errno) 
+          << "\nYou can try to reduce BYTEPS_RDMA_START_DEPTH (default 128)"
+          << " or BYTEPS_RDMA_RX_DEPTH (default 2048)";
 
       rx_ctx[i].type = kReceiveContext;
       rx_ctx[i].buffer = mr;
@@ -469,6 +485,21 @@ class IPCTransport : public RDMATransport {
     val = Environment::Get()->find("BYTEPS_IPC_ENABLE_ASYNC_COPY");
     enable_async_copy_ = val ? atoi(val) : 1; // default enabled
     if (!enable_async_copy_) LOG(INFO) << "Async copy has been disabled, this could affect the performance";
+
+    val = Environment::Get()->find("BYTEPS_PCIE_SWITCH_SIZE");
+    auto byteps_nccl_pcie_size = val ? atoi(val) : 8;
+    if (byteps_local_size % byteps_nccl_pcie_size != 0) {
+      // local_size < pcie_size or unbalance PCIe switches
+      byteps_nccl_pcie_size = byteps_local_size;
+    }
+    // ensure this name corresponds with that in BytePSSharedMemory::openPcieSharedMemory()
+    if (byteps_local_size > byteps_nccl_pcie_size) {
+      // cross pcie switch, use the last pcie cpu buffer
+      auto byteps_pcie_num = byteps_local_size / byteps_nccl_pcie_size;
+      shm_prefix_ = kShmPciePrefix + std::to_string(byteps_pcie_num - 1) + "_Shm_";
+    } else {
+      shm_prefix_ = kShmPrefix;
+    }
   };
 
   ~IPCTransport() {
@@ -486,7 +517,7 @@ class IPCTransport : public RDMATransport {
 
   void SendPullResponse(Message &msg, MessageBuffer *msg_buf, RemoteTuple remote_tuple, size_t lkey) {
     auto addr = (void*) CHECK_NOTNULL(msg.data[1].data());
-    void* shm_addr = CHECK_NOTNULL(GetSharedMemory(kShmPrefix, msg.meta.key));
+    void* shm_addr = CHECK_NOTNULL(GetSharedMemory(shm_prefix_, msg.meta.key));
 
     if (enable_async_copy_) {
       // async copy with a simple load-balancing strategy
@@ -508,7 +539,7 @@ class IPCTransport : public RDMATransport {
     SArray<char> keys = CreateFunctionalSarray(&msg->meta.key, sizeof(Key));
 
     SArray<char> vals;
-    void* addr = GetSharedMemory(kShmPrefix, key);
+    void* addr = GetSharedMemory(shm_prefix_, key);
     vals.reset(reinterpret_cast<char*>(addr), len, [](void *){});
 
     SArray<char> lens = CreateFunctionalSarray(&msg->meta.val_len, sizeof(int));
@@ -558,7 +589,7 @@ class IPCTransport : public RDMATransport {
     auto base_key = worker_key - seq_num;
     uint64_t offset = byteps_partition_bytes_ * seq_num;
     if (key_shm_addr_.find(base_key) != key_shm_addr_.end()) {
-      return key_shm_addr_[base_key] + offset;
+      return (void*) ((char*) key_shm_addr_[base_key] + offset);
     }
     std::string shm_name(prefix);
     shm_name += std::to_string(base_key);
@@ -576,7 +607,7 @@ class IPCTransport : public RDMATransport {
 
     PS_VLOG(1) << "open Shared Memory: " << shm_name << ", offset=" 
         << offset << ", (in bytes) size=" << total_shm_size;
-    return key_shm_addr_[base_key] + offset;
+    return (void*) ((char*) key_shm_addr_[base_key] + offset);
   }
 
   int ipc_copy_nthreads_;
@@ -585,6 +616,8 @@ class IPCTransport : public RDMATransport {
   std::atomic<unsigned long long> cpy_counter_{0};
 
   int byteps_partition_bytes_ = 4096000;
+
+  std::string shm_prefix_;
 
   std::mutex shm_mu_;
   std::unordered_map<uint64_t, void *> key_shm_addr_;
@@ -598,4 +631,3 @@ class IPCTransport : public RDMATransport {
 
 #endif  // DMLC_USE_RDMA
 #endif  // PS_RDMA_VAN_H_
-

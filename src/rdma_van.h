@@ -52,6 +52,22 @@ class RDMAVan : public Van {
     enable_log_ = val ? atoi(val) : false;
     if (enable_log_) LOG(INFO) << "Enable RDMA logging.";
 
+    val = Environment::Get()->find("BYTEPS_RDMA_MAX_CONCURR_WR");
+    if (val) {    
+      // should make sure: kMaxConcurrentWorkRequest >= kStartDepth + kReplyDepth + kRxDepth
+      kMaxConcurrentWorkRequest = atoi(val);
+
+      auto start_depth_env = Environment::Get()->find("BYTEPS_RDMA_START_DEPTH");
+      auto rx_depth_env = Environment::Get()->find("BYTEPS_RDMA_RX_DEPTH");
+
+      auto start_depth = start_depth_env ? atoi(start_depth_env) : 128;
+      auto rx_depth = rx_depth_env ? atoi(rx_depth_env) : 2048;
+      auto reply_depth = rx_depth;
+
+      CHECK_GE(kMaxConcurrentWorkRequest, start_depth + reply_depth + rx_depth) 
+          << "Should make sure: kMaxConcurrentWorkRequest >= kStartDepth + kReplyDepth + kRxDepth";
+    }
+
     start_mu_.unlock();
     Van::Start(customer_id);
   }
@@ -76,7 +92,11 @@ class RDMAVan : public Van {
 
     PS_VLOG(1) << "Clearing endpoints.";
     incoming_.clear();
-    endpoints_.clear();
+    { 
+      std::lock_guard<std::mutex> lk(endpoints_mu_);
+      endpoints_.clear();
+    }
+
 
     PS_VLOG(1) << "Destroying cq and pd.";
     CHECK(!ibv_destroy_cq(cq_)) << "Failed to destroy CQ";
@@ -139,6 +159,7 @@ class RDMAVan : public Van {
     }
 
     if (node.id != Node::kEmpty) {
+      endpoints_mu_.lock();
       auto it = endpoints_.find(node.id);
 
       // if there is an endpoint with pending connection
@@ -149,6 +170,7 @@ class RDMAVan : public Van {
       Endpoint *endpoint;
       endpoints_[node.id] = std::make_unique<Endpoint>();
       endpoint = endpoints_[node.id].get();
+      endpoints_mu_.unlock();
 
       endpoint->SetNodeID(node.id);
 
@@ -174,28 +196,15 @@ class RDMAVan : public Van {
             << "Create RDMA connection identifier failed";
         endpoint->cm_id->context = endpoint;
 
-        int max_retry = kMaxResolveRetry;
-        int port = kBasePort;
-        unsigned seed = static_cast<unsigned>(time(NULL) + port);
         auto val = Environment::Get()->find("DMLC_NODE_HOST");
         if (val) {
-          struct sockaddr_in addr;
-          memset(&addr, 0, sizeof(addr)); 
-          addr.sin_addr.s_addr = inet_addr(val);
-          addr.sin_family = AF_INET;
-          for (int i = 0; i < max_retry + 1; ++i) {
-            addr.sin_port = htons(port);
-            if (rdma_resolve_addr(endpoint->cm_id, 
-                                  reinterpret_cast<struct sockaddr *>(&addr),
-                                  remote_addr->ai_addr, kTimeoutms) == 0) {
-              break;
-            }
-            if (i == max_retry) {
-              port = -1;
-            } else {
-              port = 10000 + rand_r(&seed) % 40000;
-            }
-          }
+          struct addrinfo *addr;
+          auto rc = getaddrinfo(val, "", NULL, &addr);
+          CHECK_EQ(rc, 0) << "getaddrinfo failed: " << gai_strerror(rc);
+
+          CHECK_EQ(rdma_resolve_addr(endpoint->cm_id, addr->ai_addr,
+                              remote_addr->ai_addr, kTimeoutms), 0)
+              << "Resolve RDMA address failed with errno: " << strerror(errno);
         } else {
           CHECK_EQ(rdma_resolve_addr(endpoint->cm_id, nullptr,
                                      remote_addr->ai_addr, kTimeoutms),
@@ -210,18 +219,19 @@ class RDMAVan : public Van {
         if (endpoint->status == Endpoint::CONNECTED) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
       }
+      
+      bool is_local_node = disable_ipc_ ? false :
+                               (node.hostname == my_node_.hostname ? true : false);
+      {
+          std::lock_guard<std::mutex> lk(local_mu_);
+          is_local_[node.id] = is_local_node;
+      }
 
-    local_mu_.lock();
-    if (disable_ipc_) {
-      is_local_[node.id] = false;
-    } else {
-      is_local_[node.id] = (node.hostname == my_node_.hostname) ? true : false;
-    }
-    LOG(INFO) << "Connect to Node " << node.id 
-              << " with Transport=" << (is_local_[node.id]?"IPC" : "RDMA");
-    local_mu_.unlock();
+      LOG(INFO) << "Connect to Node " << node.id 
+                << " with Transport=" << (is_local_node ? "IPC" : "RDMA");
 
-      std::shared_ptr<Transport> t = is_local_[node.id] ?
+
+      std::shared_ptr<Transport> t = is_local_node ?
           std::make_shared<IPCTransport>(endpoint, mem_allocator_.get()) :
           std::make_shared<RDMATransport>(endpoint, mem_allocator_.get());
       endpoint->SetTransport(t);
@@ -233,8 +243,11 @@ class RDMAVan : public Van {
   int SendMsg(Message &msg) override {
     int remote_id = msg.meta.recver;
     CHECK_NE(remote_id, Meta::kEmpty);
+
+    endpoints_mu_.lock();
     CHECK_NE(endpoints_.find(remote_id), endpoints_.end());
     Endpoint *endpoint = endpoints_[remote_id].get();
+    endpoints_mu_.unlock();
 
     int meta_len = GetPackMetaLen(msg.meta);
     size_t data_len = msg.meta.data_size;
@@ -246,7 +259,6 @@ class RDMAVan : public Van {
     // pack meta info
     if (IsValidPushpull(msg)) {
       AddMeta(msg);
-      PackWorkerTensorAddress(msg);
     }
 
     auto trans = CHECK_NOTNULL(endpoint->GetTransport());
@@ -336,7 +348,6 @@ class RDMAVan : public Van {
     if (msg->meta.push && msg->meta.request) { 
       // push request
       total_len += trans->RecvPushRequest(msg, buffer_ctx, meta_len);
-      StoreWorkerTensorAddress(msg);
     } else if (!msg->meta.push && msg->meta.request) { 
       // pull request
       total_len += trans->RecvPullRequest(msg, buffer_ctx, meta_len);
@@ -433,39 +444,6 @@ class RDMAVan : public Van {
     }
   }
 
-  void PackWorkerTensorAddress(Message &msg) {
-    // must be pull response
-    if (msg.meta.push || msg.meta.request) return;
-    
-    uint64_t key = msg.meta.key;
-    auto recver = msg.meta.recver;
-
-    std::lock_guard<std::mutex> lock(info_mu_);
-    CHECK_NE(tensor_info_map_.find(key), tensor_info_map_.end());
-    CHECK_NE(tensor_info_map_[key].find(recver), tensor_info_map_[key].end());
-    msg.meta.val_len = std::get<0>(tensor_info_map_[key][recver]);
-    msg.meta.addr = std::get<1>(tensor_info_map_[key][recver]);
-    msg.meta.option = std::get<2>(tensor_info_map_[key][recver]);
-  }
-
-  void StoreWorkerTensorAddress(Message *msg) {
-    auto key = msg->meta.key;
-    auto len = msg->meta.val_len;
-    auto addr = msg->meta.addr;
-    auto rkey = msg->meta.option;
-    auto sender = msg->meta.sender;
-
-    std::lock_guard<std::mutex> lock(info_mu_);
-    if (tensor_info_map_.find(key) == tensor_info_map_.end()
-          || tensor_info_map_[key].find(sender) == tensor_info_map_[key].end()) {
-      tensor_info_map_[key][sender] = std::make_tuple(len, addr, rkey);
-    } else {
-      CHECK_EQ(len, std::get<0>(tensor_info_map_[key][sender]));
-      CHECK_EQ(addr, std::get<1>(tensor_info_map_[key][sender]));
-      CHECK_EQ(rkey, std::get<2>(tensor_info_map_[key][sender]));
-    }
-  }
-
   bool HasRemoteInfo(Message& msg, uint64_t key, bool is_push, int recver) {
     std::lock_guard<std::mutex> lk(addr_mu_);
     if (is_push && (push_addr_.find(key) != push_addr_.end()) 
@@ -547,6 +525,19 @@ class RDMAVan : public Van {
       }
       ++sa_cnt;
     }
+    // register for tensor address of pull request 
+    if (IsValidPushpull(msg) && !msg.meta.push && msg.meta.request) {
+      CHECK_GT(msg.meta.val_len, 0) << msg.meta.val_len;
+      auto addr = reinterpret_cast<char*>(msg.meta.addr);
+      std::lock_guard<std::mutex> lock(map_mu_);
+      if (mem_mr_.find(addr) == mem_mr_.end()) {
+        struct ibv_mr *temp_mr;
+        CHECK(temp_mr = ibv_reg_mr(mem_allocator_->GetPD(), addr, msg.meta.val_len,
+                IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE))
+                << "Failed to register the memory region: " << strerror(errno);
+        mem_mr_[addr] = temp_mr;
+      }
+    }
   }
 
   void PrepareData(Message &msg, MessageBuffer *msg_buf) {
@@ -565,17 +556,11 @@ class RDMAVan : public Van {
     if (msg.meta.request) {
       msg.meta.key = DecodeKey(msg.data[0]);
     }
-    if (msg.meta.push && msg.meta.request) { 
-      // push request
-      CHECK_EQ(msg.data.size(), 3) << msg.data.size();
-
+    if (!msg.meta.push && msg.meta.request) { 
+      // pull request 
       std::lock_guard<std::mutex> lock(map_mu_);
-      CHECK_NE(mem_mr_.find(msg.data[1].data()), mem_mr_.end());
-
-      auto& vals = msg.data[1];
-      msg.meta.addr = reinterpret_cast<uint64_t>(vals.data()); // vals address
-      msg.meta.val_len = vals.size();
-      msg.meta.option = mem_mr_[vals.data()]->rkey;
+      auto val_addr = reinterpret_cast<char*>(msg.meta.addr);
+      msg.meta.option = mem_mr_[val_addr]->rkey;
     }
   }
 
@@ -766,9 +751,12 @@ class RDMAVan : public Van {
   void OnRejected(struct rdma_cm_event *event) {
     struct rdma_cm_id *id = event->id;
     Endpoint *endpoint = reinterpret_cast<Endpoint *>(id->context);
-
+    
+    endpoints_mu_.lock();
     auto it = endpoints_.find(endpoint->node_id);
     CHECK(it != endpoints_.end()) << "Connection not ready.";
+    endpoints_mu_.unlock();
+
     CHECK_EQ(endpoint->status, Endpoint::CONNECTING);
     CHECK_EQ(endpoint->cm_id, id);
 
@@ -805,17 +793,17 @@ class RDMAVan : public Van {
 
     endpoint->Init(cq_, pd_);
 
-    local_mu_.lock();
-    if (disable_ipc_) {
-      is_local_[remote_ctx->node] = false;
-    } else {
-      is_local_[remote_ctx->node] = (std::string(remote_ctx->hostname) == my_node_.hostname) ? true : false;
+
+    bool is_local_node = disable_ipc_ ? false :
+                             (std::string(remote_ctx->hostname) == my_node_.hostname ? true : false);
+    {
+        std::lock_guard<std::mutex> lk(local_mu_);
+        is_local_[remote_ctx->node] = is_local_node;
     }
     LOG(INFO) << "OnConnect to Node " << remote_ctx->node 
-              << " with Transport=" << (is_local_[remote_ctx->node]?"IPC" : "RDMA");
-    local_mu_.unlock();
+              << " with Transport=" << (is_local_node ? "IPC" : "RDMA");
 
-    std::shared_ptr<Transport> t = is_local_[remote_ctx->node] ?
+    std::shared_ptr<Transport> t = is_local_node ?
         std::make_shared<IPCTransport>(endpoint, mem_allocator_.get()) :
         std::make_shared<RDMATransport>(endpoint, mem_allocator_.get());
     endpoint->SetTransport(t);
@@ -911,6 +899,7 @@ class RDMAVan : public Van {
   struct rdma_cm_id *listener_ = nullptr;
   std::atomic<bool> should_stop_;
 
+  std::mutex endpoints_mu_;
   std::unordered_map<int, std::unique_ptr<Endpoint>> endpoints_;
   std::unordered_set<std::unique_ptr<Endpoint>> incoming_;
 
@@ -935,12 +924,6 @@ class RDMAVan : public Van {
   std::mutex local_mu_;
   std::unordered_map<int, bool> is_local_;
 
-  // worker's tensor address
-  std::mutex info_mu_;
-  using TensorInfo = std::tuple<int, uint64_t, int>; // len, addr, rkey
-  using RemoteTensorMeta = std::unordered_map<int, TensorInfo>; // sender as the key
-  std::unordered_map<ps::Key, RemoteTensorMeta> tensor_info_map_; // (key, sender) --> TensorInfo
-
   std::mutex addr_mu_;
   // <key, recver>, (<remote_addr, rkey, idx, local_addr>)
   std::unordered_map<uint64_t, RemoteAndLocalAddress> push_addr_; 
@@ -953,6 +936,8 @@ class RDMAVan : public Van {
   // logging
   bool enable_log_;
   std::mutex log_mu_;
+
+  int kMaxConcurrentWorkRequest = 4224; // 128 + 2048 * 2
 
 };  // class RDMAVan
 
