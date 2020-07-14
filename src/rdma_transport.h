@@ -631,3 +631,4 @@ class IPCTransport : public RDMATransport {
 
 #endif  // DMLC_USE_RDMA
 #endif  // PS_RDMA_VAN_H_
+
