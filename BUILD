@@ -3,7 +3,7 @@ cc_library(
     srcs=["src/*.cc"],
     incs=["src",
           "include"],
-    export_incs=["lib/include"],
+    export_incs=["include"],
     deps=["cpp3rdlib/zmq:4.1.4@//cpp3rdlib/zmq:zmq",
           "cpp3rdlib/glog:0.3.3@//cpp3rdlib/glog:glog"
           ],
