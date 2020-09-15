@@ -27,4 +27,5 @@ cc_binary(
     defs=["DMLC_USE_RDMA"],
     optimize=["-O3", "-g", "-fopenmp", "-Wall", "-Wextra", "-std=c++14"],
     extra_linkflags=["-ldl", "-lrt"],
+    bundle_path="bundle",
 )
