@@ -113,8 +113,10 @@ void EmptyHandler(const KVMeta &req_meta, const KVPairs<Val> &req_data, KVServer
 void StartServer() {
   if (!IsServer()) return;
   debug_mode_ = Environment::Get()->find("DEBUG_MODE") ? true : false;
+  LOG(INFO) << "To start KV Server.";
 
   auto server = new KVServer<char>(0);
+  LOG(INFO) << "KV Server setup completed.";
   server->set_request_handle(EmptyHandler<char>);
   RegisterExitCallback([server]() { delete server; });
 }
@@ -357,33 +359,33 @@ void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid, int nthread)
   for (int minibatch = 0; minibatch < repeat; ++ minibatch) {
     // dataScatter
     uint64_t accumulated_ms = 0;
-    {
-      auto start = std::chrono::high_resolution_clock::now();
-      std::vector<int> timestamps;
-      for (int global_gid = 0; global_gid < global_gpu_size; global_gid ++) {
-        int dst_node_id = global_gid / local_gpu_size;          
-        // Skip if worker and server on same node.
-        if (node_id == dst_node_id) continue;
+    // {
+    //   auto start = std::chrono::high_resolution_clock::now();
+    //   std::vector<int> timestamps;
+    //   for (int global_gid = 0; global_gid < global_gpu_size; global_gid ++) {
+    //     int dst_node_id = global_gid / local_gpu_size;          
+    //     // Skip if worker and server on same node.
+    //     if (node_id == dst_node_id) continue;
 
-        int idx = GetKeyIndex(COMM_TYPE::DATA_SCATTER, my_global_session_id, global_gid,
-                              global_gpu_size, num_servers);
-        auto lens = server_lens[0];
-        auto keys = server_keys_datascatter[idx];
-        auto vals = server_vals_datascatter[idx];
+    //     int idx = GetKeyIndex(COMM_TYPE::DATA_SCATTER, my_global_session_id, global_gid,
+    //                           global_gpu_size, num_servers);
+    //     auto lens = server_lens[0];
+    //     auto keys = server_keys_datascatter[idx];
+    //     auto vals = server_vals_datascatter[idx];
 
-        timestamps.push_back(kv->ZPush(keys, vals, lens));
-      }
-      for (auto ts : timestamps) {
-        kv->Wait(ts);
-      }
-      auto end = std::chrono::high_resolution_clock::now();
-      accumulated_ms += (end - start).count(); // ns
-    }
-    if (minibatch % 100 == 0)
-      LL << "DataScatter " << len * sizeof(char)
-          << " bytes to each server, repeat=" << repeat
-          << ", total_time="
-          << accumulated_ms / 1e6 << "ms";
+    //     timestamps.push_back(kv->ZPush(keys, vals, lens));
+    //   }
+    //   for (auto ts : timestamps) {
+    //     kv->Wait(ts);
+    //   }
+    //   auto end = std::chrono::high_resolution_clock::now();
+    //   accumulated_ms += (end - start).count(); // ns
+    // }
+    // if (minibatch % 100 == 0)
+    //   LL << "DataScatter " << len * sizeof(char)
+    //       << " bytes to each server, repeat=" << repeat
+    //       << ", total_time="
+    //       << accumulated_ms / 1e6 << "ms";
 
     // gather
     accumulated_ms = 0;
@@ -449,54 +451,54 @@ void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid, int nthread)
           << ", total_time="
           << accumulated_ms / 1e6 << "ms";
 
-    // dense
-    accumulated_ms = 0;
-    {
-      auto start = std::chrono::high_resolution_clock::now();
-      std::vector<int> timestamps;
-      for (int server = 0; server < num_servers; server ++) {
-        // Skip if worker and server on same node.
-        if (node_id == server) continue;
+    // // dense
+    // accumulated_ms = 0;
+    // {
+    //   auto start = std::chrono::high_resolution_clock::now();
+    //   std::vector<int> timestamps;
+    //   for (int server = 0; server < num_servers; server ++) {
+    //     // Skip if worker and server on same node.
+    //     if (node_id == server) continue;
 
-        int idx = GetKeyIndex(COMM_TYPE::DENSE, my_global_session_id, server, 
-                              global_gpu_size, num_servers);
-        auto lens = server_lens[0];
-        auto keys = server_keys_dense[idx];
-        auto vals = server_vals_dense[idx];
+    //     int idx = GetKeyIndex(COMM_TYPE::DENSE, my_global_session_id, server, 
+    //                           global_gpu_size, num_servers);
+    //     auto lens = server_lens[0];
+    //     auto keys = server_keys_dense[idx];
+    //     auto vals = server_vals_dense[idx];
 
-        timestamps.push_back(kv->ZPush(keys, vals, lens));
-      }
-      for (auto ts : timestamps) {
-        kv->Wait(ts);
-      }
+    //     timestamps.push_back(kv->ZPush(keys, vals, lens));
+    //   }
+    //   for (auto ts : timestamps) {
+    //     kv->Wait(ts);
+    //   }
 
-      timestamps.clear();
+    //   timestamps.clear();
 
-      for (int server = 0; server < num_servers; server ++) {
-        // Skip if worker and server on same node.
-        if (node_id == server) continue;
+    //   for (int server = 0; server < num_servers; server ++) {
+    //     // Skip if worker and server on same node.
+    //     if (node_id == server) continue;
 
-        int idx = GetKeyIndex(COMM_TYPE::DENSE, my_global_session_id, server, 
-                              global_gpu_size, num_servers);
-        auto lens = server_lens[0];
-        auto keys = server_keys_dense[idx];
-        auto vals = server_vals_dense[idx];
+    //     int idx = GetKeyIndex(COMM_TYPE::DENSE, my_global_session_id, server, 
+    //                           global_gpu_size, num_servers);
+    //     auto lens = server_lens[0];
+    //     auto keys = server_keys_dense[idx];
+    //     auto vals = server_vals_dense[idx];
 
-        timestamps.push_back(kv->ZPull(keys, &vals, &lens));
-      }
-      for (auto ts : timestamps) {
-        kv->Wait(ts);
-      }
+    //     timestamps.push_back(kv->ZPull(keys, &vals, &lens));
+    //   }
+    //   for (auto ts : timestamps) {
+    //     kv->Wait(ts);
+    //   }
 
-      auto end = std::chrono::high_resolution_clock::now();
-      accumulated_ms += (end - start).count(); // ns
-    }
+    //   auto end = std::chrono::high_resolution_clock::now();
+    //   accumulated_ms += (end - start).count(); // ns
+    // }
 
-    if (minibatch % 100 == 0)
-      LL << "Dense " << len * sizeof(char)
-          << " bytes to each server, repeat=" << repeat
-          << ", total_time="
-          << accumulated_ms / 1e6 << "ms";
+  //   if (minibatch % 100 == 0)
+  //     LL << "Dense " << len * sizeof(char)
+  //         << " bytes to each server, repeat=" << repeat
+  //         << ", total_time="
+  //         << accumulated_ms / 1e6 << "ms";
   }
 }
 
@@ -510,10 +512,21 @@ int main(int argc, char *argv[]) {
 
   // start system
   Start(0);
-  // setup server nodes
-  StartServer();
+  LOG(INFO) << "Postoffice started.";
+  // // setup server nodes
+  // StartServer();
+
+  setenv("DMLC_ROLE", "server", 1 /* overwrite */);
+  std::thread thread(StartServer);
+
+  std::chrono::seconds time(5);
+  std::this_thread::sleep_for(time);
+  setenv("DMLC_ROLE", "worker", 1 /* overwrite */);
+
   // run worker nodes
-  if (IsWorker()) {
+  if (IsWorker())
+  {
+    LOG(INFO) << "To start KV Worker.";
     KVWorker<char> kv(0, 0);
 
     {

@@ -328,6 +328,11 @@ class KVServer : public SimpleApp {
     obj_ = new Customer(app_id, app_id, std::bind(&KVServer<Val>::Process, this, _1));
   }
 
+  explicit KVServer(int app_id, int customer_id) : SimpleApp() {
+    using namespace std::placeholders;
+    obj_ = new Customer(app_id, customer_id, std::bind(&KVServer<Val>::Process, this, _1));
+  }
+
   /** \brief deconstructor */
   virtual ~KVServer() {
     delete obj_;

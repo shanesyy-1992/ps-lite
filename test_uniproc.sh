@@ -6,10 +6,10 @@ function cleanup() {
 trap cleanup EXIT
 cleanup # cleanup on startup
 
-export DMLC_NUM_WORKER=2
-export DMLC_NUM_SERVER=2
+export DMLC_NUM_WORKER=1
+export DMLC_NUM_SERVER=1
 export DMLC_PS_ROOT_URI=10.130.23.14  # try eth2
-export BYTEPS_ORDERED_HOSTS=10.130.23.14,10.130.23.21
+export BYTEPS_ORDERED_HOSTS=10.130.23.14
 
 export DMLC_PS_ROOT_PORT=8188     # scheduler's port (can random choose)
 export DMLC_INTERFACE=eth2        # my RDMA interface
@@ -17,18 +17,12 @@ export DMLC_ENABLE_RDMA=1
 
 export BYTEPS_ENABLE_IPC=0
 
-export BYTEPS_NODE_ID=1
+export BYTEPS_NODE_ID=0
+DMLC_ROLE=scheduler ./stress_test_benchmark &
 
-if [ $# -eq 0 ] # no other args
-then
-    # launch scheduler
-    export BYTEPS_NODE_ID=0
-    DMLC_ROLE=scheduler ./stress_test_benchmark &
-fi
-
-# launch server
-DMLC_ROLE=server ./stress_test_benchmark &
+# # # launch server
+# DMLC_ROLE=server ./stress_test_benchmark &
 
 # launch worker, with 30MB data per push pull, 10000 rounds, push_then_pull mode
 # DMLC_ROLE=worker BENCHMARK_NTHREAD=1 gdb7.12 -ex run --args ./stress_test_benchmark 30000000 1000000000 0
-DMLC_ROLE=worker BENCHMARK_NTHREAD=2 ./stress_test_benchmark 1000000 1000000000 0
+DMLC_ROLE=worker BENCHMARK_NTHREAD=1 ./stress_test_benchmark 300000000 1000000000 0
