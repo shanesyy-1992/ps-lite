@@ -34,8 +34,20 @@ inline int MyRank() { return Postoffice::Get()->my_rank(); }
  * This function will block until every nodes are started.
  * \param argv0 the program name, used for logging
  */
-inline void Start(int customer_id, const char *argv0 = nullptr) {
-  Postoffice::Get()->Start(customer_id, argv0, true);
+// inline void Start(int customer_id, const char *argv0 = nullptr) {
+//   Postoffice::Get()->Start(customer_id, argv0, true);
+// }
+
+inline void StartServerPS(int customer_id, const char *argv0 = nullptr) {
+  Postoffice::GetServer()->Start(customer_id, argv0, true, Role::SERVER);
+}
+
+inline void StartWorkerPS(int customer_id, const char *argv0 = nullptr) {
+  Postoffice::GetWorker()->Start(customer_id, argv0, true, Role::WORKER);
+}
+
+inline void StartSchedulerPS(int customer_id, const char *argv0 = nullptr) {
+  Postoffice::GetServer()->Start(customer_id, argv0, true, Role::SCHEDULER);
 }
 /**
  * \brief start the system
@@ -43,9 +55,9 @@ inline void Start(int customer_id, const char *argv0 = nullptr) {
  * This function will NOT block.
  * \param argv0 the program name, used for logging
  */
-inline void StartAsync(int customer_id, const char *argv0 = nullptr) {
-  Postoffice::Get()->Start(customer_id, argv0, false);
-}
+// inline void StartAsync(int customer_id, const char *argv0 = nullptr) {
+//   Postoffice::Get()->Start(customer_id, argv0, false);
+// }
 /**
  * \brief terminate the system
  *

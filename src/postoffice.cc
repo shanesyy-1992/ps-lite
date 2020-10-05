@@ -9,6 +9,12 @@
 #include "ps/base.h"
 
 namespace ps {
+
+Postoffice* Postoffice::po_server_ = nullptr;
+Postoffice* Postoffice::po_worker_ = nullptr;
+Postoffice* Postoffice::po_default_ = nullptr;
+std::mutex Postoffice::singleton_mu_;
+
 Postoffice::Postoffice() {
   env_ref_ = Environment::_GetSharedRef();
 }
@@ -18,9 +24,9 @@ void Postoffice::InitEnvironment() {
   int enable_rdma = GetEnv("DMLC_ENABLE_RDMA", 0);
   if (enable_rdma) {
     LOG(INFO) << "enable RDMA for networking";
-    van_ = Van::Create("rdma");
+    van_ = Van::Create("rdma", this);
   } else {
-    van_ = Van::Create("zmq");
+    van_ = Van::Create("zmq", this);
   }
   val = CHECK_NOTNULL(Environment::Get()->find("DMLC_NUM_WORKER"));
   num_workers_ = atoi(val);
@@ -34,10 +40,31 @@ void Postoffice::InitEnvironment() {
   verbose_ = GetEnv("PS_VERBOSE", 0);
 }
 
-void Postoffice::Start(int customer_id, const char* argv0, const bool do_barrier) {
+void Postoffice::Start(int customer_id, const char* argv0, const bool do_barrier,
+                       const Role role) {
   start_mu_.lock();
   if (init_stage_ == 0) {
     InitEnvironment();
+  switch(role) {
+    case WORKER: {
+      is_worker_ = true;
+      is_server_ = false;
+      is_scheduler_ = false;
+      break;
+    }
+    case SERVER: {
+      is_worker_ = false;
+      is_server_ = true;
+      is_scheduler_ = false;
+      break;
+    }
+    case SCHEDULER: {
+      is_worker_ = false;
+      is_server_ = false;
+      is_scheduler_ = true;
+    }
+  }
+
     // init glog
     if (argv0) {
       dmlc::InitLogging(argv0);
@@ -71,9 +98,11 @@ void Postoffice::Start(int customer_id, const char* argv0, const bool do_barrier
     init_stage_++;
   }
   start_mu_.unlock();
+  LOG(INFO) << "Postoffice to start van.";
 
   // start van
   van_->Start(customer_id);
+  LOG(INFO) << "Postoffice van started.";
 
   start_mu_.lock();
   if (init_stage_ == 1) {

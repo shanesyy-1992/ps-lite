@@ -296,7 +296,7 @@ uint64_t DecodeKey(SArray<char> keys) { // just a translation, the decoded key m
 }
 
 uint64_t DecodeWorkerKey(uint64_t key) {
-  auto kr = ps::Postoffice::Get()->GetServerKeyRanges()[ps::Postoffice::Get()->my_rank()];
+  auto kr = ps::Postoffice::GetServer()->GetServerKeyRanges()[ps::Postoffice::GetServer()->my_rank()];
   return key - kr.begin();
 }
 

@@ -15,14 +15,16 @@ namespace ps {
 const int Node::kEmpty = std::numeric_limits<int>::max();
 const int Meta::kEmpty = std::numeric_limits<int>::max();
 
-Customer::Customer(int app_id, int customer_id, const Customer::RecvHandle& recv_handle)
-    : app_id_(app_id), customer_id_(customer_id), recv_handle_(recv_handle) {
-  Postoffice::Get()->AddCustomer(this);
+Customer::Customer(int app_id, int customer_id, const Customer::RecvHandle& recv_handle, Postoffice* postoffice)
+    : app_id_(app_id), customer_id_(customer_id), recv_handle_(recv_handle), postoffice_(postoffice) {
+  // Postoffice::Get()->AddCustomer(this);
+  postoffice_->AddCustomer(this);
   recv_thread_ = std::unique_ptr<std::thread>(new std::thread(&Customer::Receiving, this));
 }
 
 Customer::~Customer() {
-  Postoffice::Get()->RemoveCustomer(this);
+  // Postoffice::Get()->RemoveCustomer(this);
+  postoffice_->RemoveCustomer(this);
   Message msg;
   msg.meta.control.cmd = Control::TERMINATE;
   recv_queue_.Push(msg);
@@ -31,7 +33,8 @@ Customer::~Customer() {
 
 int Customer::NewRequest(int recver) {
   std::lock_guard<std::mutex> lk(tracker_mu_);
-  int num = Postoffice::Get()->GetNodeIDs(recver).size();
+  // int num = Postoffice::Get()->GetNodeIDs(recver).size();
+  int num = postoffice_->GetNodeIDs(recver).size();
   tracker_.push_back(std::make_pair(num, 0));
   return tracker_.size() - 1;
 }

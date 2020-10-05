@@ -25,7 +25,7 @@ namespace ps {
 
 class RDMAVan : public Van {
  public:
-  RDMAVan() {
+  RDMAVan(Postoffice* postoffice) : Van(postoffice) {
     CHECK_EQ(ibv_fork_init(), 0) << strerror(errno);
   }
   ~RDMAVan() {}

@@ -58,7 +58,7 @@ template <typename Val>
 void EmptyHandler(const KVMeta &req_meta, const KVPairs<Val> &req_data, KVServer<Val> *server) {
   uint64_t key = req_data.keys[0];
 
-  auto krs = ps::Postoffice::Get()->GetServerKeyRanges();
+  auto krs = ps::Postoffice::GetServer()->GetServerKeyRanges();
   auto node_id_str = Environment::Get()->find("BYTEPS_NODE_ID");
   int node_id = atoi(node_id_str);
 
@@ -111,7 +111,7 @@ void EmptyHandler(const KVMeta &req_meta, const KVPairs<Val> &req_data, KVServer
 }
 
 void StartServer() {
-  if (!IsServer()) return;
+  // if (!IsServer()) return;
   debug_mode_ = Environment::Get()->find("DEBUG_MODE") ? true : false;
   LOG(INFO) << "To start KV Server.";
 
@@ -266,7 +266,7 @@ void InitWorker(KVWorker<char>* kv, int len, int global_session_size, int global
     InitVals(server_vals_dense, global_session_size * num_servers, len);
   }
 
-  auto krs = ps::Postoffice::Get()->GetServerKeyRanges();
+  auto krs = ps::Postoffice::GetWorker()->GetServerKeyRanges();
   int latest_key = 0;
   // Init all the keys and init push, do not count this into time cost
   // Only the root node (global session id = 0) would push to the server for server memory init.
@@ -326,12 +326,12 @@ void InitWorker(KVWorker<char>* kv, int len, int global_session_size, int global
     }
   }
 
-  Postoffice::Get()->Barrier(0, ps::kWorkerGroup);
+  Postoffice::GetWorker()->Barrier(0, ps::kWorkerGroup);
   LOG(INFO) << "Finish setup.";
 }
 
 void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid, int nthread) {
-  auto krs = ps::Postoffice::Get()->GetServerKeyRanges();
+  auto krs = ps::Postoffice::GetWorker()->GetServerKeyRanges();
 
   const int num_servers = krs.size();
   LOG(INFO) << num_servers << " servers in total";
@@ -511,26 +511,40 @@ int main(int argc, char *argv[]) {
   LOG(INFO) << "number of threads for the same worker = " << nthread;
 
   // start system
-  Start(0);
-  LOG(INFO) << "Postoffice started.";
-  // // setup server nodes
-  // StartServer();
+  const char* val = CHECK_NOTNULL(Environment::Get()->find("DMLC_ROLE"));
+  std::string role(val);
+  bool is_scheduler_ = role == "scheduler";
 
-  setenv("DMLC_ROLE", "server", 1 /* overwrite */);
-  std::thread thread(StartServer);
+  if (is_scheduler_) {
+    StartSchedulerPS(0);
+  } else {
+    // StartServerPS(0);
+    std::thread thread_s(StartServerPS, 0, nullptr);
+    LOG(INFO) << "Postoffice server started.";
 
+    // StartWorkerPS(0);
+    std::thread thread_w(StartWorkerPS, 0, nullptr);
+    LOG(INFO) << "Postoffice worker started.";
+
+    thread_s.join();
+    thread_w.join();
+  }
   std::chrono::seconds time(5);
-  std::this_thread::sleep_for(time);
-  setenv("DMLC_ROLE", "worker", 1 /* overwrite */);
+  // std::this_thread::sleep_for(time);
 
-  // run worker nodes
-  if (IsWorker())
+  std::thread thread(StartServer);
+  thread.join();
+
+  std::this_thread::sleep_for(time);
+  // run worker mode in non_schduler process
+  if (! is_scheduler_)
   {
     LOG(INFO) << "To start KV Worker.";
     KVWorker<char> kv(0, 0);
+    LOG(INFO) << "KV Worker started.";
 
     {
-      auto krs = ps::Postoffice::Get()->GetServerKeyRanges();
+      auto krs = ps::Postoffice::GetWorker()->GetServerKeyRanges();
       const int num_servers = krs.size();
 
       LOG(INFO) << num_servers << " servers in total";

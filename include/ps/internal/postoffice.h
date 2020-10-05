@@ -11,6 +11,13 @@
 #include "ps/internal/customer.h"
 #include "ps/internal/van.h"
 namespace ps {
+
+enum Role {
+  WORKER = 0,
+  SERVER = 1,
+  SCHEDULER = 2
+};
+
 /**
  * \brief the center of the system
  */
@@ -19,9 +26,30 @@ class Postoffice {
   /**
    * \brief return the singleton object
    */
+  // static Postoffice* Get() {
+  //   static Postoffice e; return &e;
+  // }
+
   static Postoffice* Get() {
-    static Postoffice e; return &e;
+    return po_server_ ? po_server_ : po_worker_;
   }
+
+  static Postoffice* GetServer() {
+    std::lock_guard<std::mutex> lk(singleton_mu_);
+    if (!po_server_) {
+      po_server_ = new Postoffice;
+    }
+    return po_server_;
+  }
+
+  static Postoffice* GetWorker() {
+    std::lock_guard<std::mutex> lk(singleton_mu_);
+    if (!po_worker_) {
+      po_worker_ = new Postoffice;
+    }
+    return po_worker_;
+  }
+
   /** \brief get the van */
   Van* van() { return van_; }
   /**
@@ -31,7 +59,8 @@ class Postoffice {
    * \param argv0 the program name, used for logging.
    * \param do_barrier whether to block until every nodes are started.
    */
-  void Start(int customer_id, const char* argv0, const bool do_barrier);
+  void Start(int customer_id, const char* argv0, const bool do_barrier,
+             const Role role);
   /**
    * \brief terminate the system
    *
@@ -164,6 +193,11 @@ class Postoffice {
  private:
   Postoffice();
   ~Postoffice() { delete van_; }
+
+  static Postoffice* po_server_;
+  static Postoffice* po_worker_;
+  static Postoffice* po_default_;
+  static std::mutex singleton_mu_;
 
   void InitEnvironment();
   Van* van_;
