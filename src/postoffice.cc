@@ -11,6 +11,7 @@
 namespace ps {
 
 Postoffice* Postoffice::po_server_ = nullptr;
+Postoffice* Postoffice::po_scheduler_ = nullptr;
 Postoffice* Postoffice::po_worker_ = nullptr;
 Postoffice* Postoffice::po_default_ = nullptr;
 std::mutex Postoffice::singleton_mu_;

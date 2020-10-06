@@ -326,16 +326,10 @@ class KVServer : public SimpleApp {
    * \brief constructor
    * \param app_id the app id, should match with \ref KVWorker's id
    */
-  explicit KVServer(int app_id) : SimpleApp() {
-    postoffice_ = Postoffice::GetServer();
+  explicit KVServer(int app_id, bool is_scheduler = false) : SimpleApp() {
+    postoffice_ = is_scheduler ? Postoffice::GetScheduler() : Postoffice::GetServer();
     using namespace std::placeholders;
     obj_ = new Customer(app_id, app_id, std::bind(&KVServer<Val>::Process, this, _1), postoffice_);
-  }
-
-  explicit KVServer(int app_id, int customer_id) : SimpleApp() {
-    postoffice_ = Postoffice::GetServer();
-    using namespace std::placeholders;
-    obj_ = new Customer(app_id, customer_id, std::bind(&KVServer<Val>::Process, this, _1), postoffice_);
   }
 
   /** \brief deconstructor */

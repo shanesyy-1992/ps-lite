@@ -110,12 +110,12 @@ void EmptyHandler(const KVMeta &req_meta, const KVPairs<Val> &req_data, KVServer
   }
 }
 
-void StartServer() {
+void StartServer(bool is_scheduler) {
   // if (!IsServer()) return;
   debug_mode_ = Environment::Get()->find("DEBUG_MODE") ? true : false;
   LOG(INFO) << "To start KV Server.";
 
-  auto server = new KVServer<char>(0);
+  auto server = new KVServer<char>(0, is_scheduler);
   LOG(INFO) << "KV Server setup completed.";
   server->set_request_handle(EmptyHandler<char>);
   RegisterExitCallback([server]() { delete server; });
@@ -510,17 +510,35 @@ int main(int argc, char *argv[]) {
   const int nthread = v ? atoi(v) : 1;
   LOG(INFO) << "number of threads for the same worker = " << nthread;
 
-  StartJointPS(0);
-
-  std::thread thread(StartServer);
-  thread.join();
-
   const char* val = CHECK_NOTNULL(Environment::Get()->find("DMLC_ROLE"));
   std::string role(val);
   bool is_scheduler = role == "scheduler";
 
+  StartJointPS(0, nullptr, false);
+
+  // if (role == "worker") {
+  //   StartPS(0, Node::WORKER);
+  // } else {
+  //   if (role == "scheduler") {
+  //     StartPS(0, Node::SCHEDULER);
+  //   } else {
+  //     StartPS(0, Node::SERVER);
+  //   }
+  // }
+
+  if (role != "worker") {
+    std::thread thread(StartServer, role == "scheduler");
+    // std::thread thread_sch(StartServer, true /* is_scheduler */);
+
+    thread.join();
+    // thread_sch.join();
+
+    LOG(INFO) << role << " started server.";
+  }
+
   // run worker mode in non_schduler process
-  if (! is_scheduler)
+  // if (! is_scheduler)
+  if (role == "worker")
   {
     LOG(INFO) << "To start KV Worker.";
     KVWorker<char> kv(0, 0);

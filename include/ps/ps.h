@@ -38,34 +38,40 @@ inline int MyRank() { return Postoffice::Get()->my_rank(); }
 //   Postoffice::Get()->Start(customer_id, argv0, true);
 // }
 
-inline void StartServerPS(int customer_id, const char *argv0 = nullptr) {
-  Postoffice::GetServer()->Start(customer_id, argv0, true, Node::SERVER);
+inline void StartPS(int customer_id, Node::Role role, const char *argv0 = nullptr) {
+  if (role == Node::WORKER) {
+    Postoffice::GetWorker()->Start(customer_id, argv0, true, role);
+  } else {
+    Postoffice::GetServer()->Start(customer_id, argv0, true, role);
+  }
 }
 
-inline void StartWorkerPS(int customer_id, const char *argv0 = nullptr) {
-  Postoffice::GetWorker()->Start(customer_id, argv0, true, Node::WORKER);
-}
-
-inline void StartSchedulerPS(int customer_id, const char *argv0 = nullptr) {
-  Postoffice::GetServer()->Start(customer_id, argv0, true, Node::SCHEDULER);
-}
-
-inline void StartJointPS(int customer_id, const char *argv0 = nullptr) {
+inline void StartJointPS(int customer_id, const char *argv0 = nullptr, bool include_scheduler = false) {
   const char* val = CHECK_NOTNULL(Environment::Get()->find("DMLC_ROLE"));
   std::string role(val);
   bool is_scheduler = role == "scheduler";
 
   if (is_scheduler) {
-    StartSchedulerPS(customer_id);
+    StartPS(customer_id, Node::SCHEDULER);
   } else {
-    std::thread thread_s(StartServerPS, customer_id, nullptr);
+    std::thread thread_sch;
+    if (include_scheduler) {
+      thread_sch = std::move(std::thread(StartPS, customer_id, Node::SCHEDULER, nullptr));
+      LOG(INFO) << "Postoffice scheduler started.";
+    }
+
+    std::thread thread_s(StartPS, customer_id, Node::SERVER, nullptr);
     LOG(INFO) << "Postoffice server started.";
 
-    std::thread thread_w(StartWorkerPS, customer_id, nullptr);
+    std::thread thread_w(StartPS, customer_id, Node::WORKER, nullptr);
     LOG(INFO) << "Postoffice worker started.";
 
     thread_s.join();
     thread_w.join();
+
+    if (include_scheduler) {
+      thread_sch.join();
+    }
   }
 }
 

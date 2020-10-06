@@ -32,6 +32,14 @@ class Postoffice {
     return po_server_;
   }
 
+  static Postoffice* GetScheduler() {
+    std::lock_guard<std::mutex> lk(singleton_mu_);
+    if (!po_scheduler_) {
+      po_scheduler_ = new Postoffice;
+    }
+    return po_scheduler_;
+  }
+
   static Postoffice* GetWorker() {
     std::lock_guard<std::mutex> lk(singleton_mu_);
     if (!po_worker_) {
@@ -185,6 +193,7 @@ class Postoffice {
   ~Postoffice() { delete van_; }
 
   static Postoffice* po_server_;
+  static Postoffice* po_scheduler_;
   static Postoffice* po_worker_;
   static Postoffice* po_default_;
   static std::mutex singleton_mu_;
