@@ -12,12 +12,6 @@
 #include "ps/internal/van.h"
 namespace ps {
 
-enum Role {
-  WORKER = 0,
-  SERVER = 1,
-  SCHEDULER = 2
-};
-
 /**
  * \brief the center of the system
  */
@@ -26,10 +20,6 @@ class Postoffice {
   /**
    * \brief return the singleton object
    */
-  // static Postoffice* Get() {
-  //   static Postoffice e; return &e;
-  // }
-
   static Postoffice* Get() {
     return po_server_ ? po_server_ : po_worker_;
   }
@@ -60,7 +50,7 @@ class Postoffice {
    * \param do_barrier whether to block until every nodes are started.
    */
   void Start(int customer_id, const char* argv0, const bool do_barrier,
-             const Role role);
+             const Node::Role role);
   /**
    * \brief terminate the system
    *

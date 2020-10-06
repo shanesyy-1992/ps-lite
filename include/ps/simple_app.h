@@ -143,10 +143,8 @@ inline int SimpleApp::Request(int req_head, const std::string& req_body, int rec
   msg.meta.customer_id = obj_->customer_id();
 
   // send
-  // for (int r : Postoffice::Get()->GetNodeIDs(recv_id)) {
   for (int r : postoffice_->GetNodeIDs(recv_id)) {
     msg.meta.recver = r;
-    // Postoffice::Get()->van()->Send(msg);
     postoffice_->van()->Send(msg);
   }
   return ts;
@@ -165,7 +163,6 @@ inline void SimpleApp::Response(const SimpleData& req, const std::string& res_bo
   msg.meta.recver = req.sender;
 
   // send
-  // Postoffice::Get()->van()->Send(msg);
   postoffice_->van()->Send(msg);
 }
 

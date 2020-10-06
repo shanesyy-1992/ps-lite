@@ -39,25 +39,49 @@ inline int MyRank() { return Postoffice::Get()->my_rank(); }
 // }
 
 inline void StartServerPS(int customer_id, const char *argv0 = nullptr) {
-  Postoffice::GetServer()->Start(customer_id, argv0, true, Role::SERVER);
+  Postoffice::GetServer()->Start(customer_id, argv0, true, Node::SERVER);
 }
 
 inline void StartWorkerPS(int customer_id, const char *argv0 = nullptr) {
-  Postoffice::GetWorker()->Start(customer_id, argv0, true, Role::WORKER);
+  Postoffice::GetWorker()->Start(customer_id, argv0, true, Node::WORKER);
 }
 
 inline void StartSchedulerPS(int customer_id, const char *argv0 = nullptr) {
-  Postoffice::GetServer()->Start(customer_id, argv0, true, Role::SCHEDULER);
+  Postoffice::GetServer()->Start(customer_id, argv0, true, Node::SCHEDULER);
 }
+
+inline void StartJointPS(int customer_id, const char *argv0 = nullptr) {
+  const char* val = CHECK_NOTNULL(Environment::Get()->find("DMLC_ROLE"));
+  std::string role(val);
+  bool is_scheduler = role == "scheduler";
+
+  if (is_scheduler) {
+    StartSchedulerPS(customer_id);
+  } else {
+    std::thread thread_s(StartServerPS, customer_id, nullptr);
+    LOG(INFO) << "Postoffice server started.";
+
+    std::thread thread_w(StartWorkerPS, customer_id, nullptr);
+    LOG(INFO) << "Postoffice worker started.";
+
+    thread_s.join();
+    thread_w.join();
+  }
+}
+
 /**
  * \brief start the system
  *
  * This function will NOT block.
  * \param argv0 the program name, used for logging
  */
-// inline void StartAsync(int customer_id, const char *argv0 = nullptr) {
-//   Postoffice::Get()->Start(customer_id, argv0, false);
-// }
+inline void StartAsync(int customer_id, Node::Role role, const char *argv0 = nullptr) {
+  if (role == Node::WORKER) {
+    Postoffice::GetWorker()->Start(customer_id, argv0, false, role);
+  } else {
+    Postoffice::GetServer()->Start(customer_id, argv0, false, role);
+  }
+}
 /**
  * \brief terminate the system
  *

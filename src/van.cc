@@ -91,7 +91,6 @@ void Van::ProcessTerminateCommand() {
 void Van::ProcessAddNodeCommandAtScheduler(Message *msg, Meta *nodes, Meta *recovery_nodes) {
   recovery_nodes->control.cmd = Control::ADD_NODE;
   time_t t = time(NULL);
-  // size_t num_nodes = Postoffice::Get()->num_servers() + Postoffice::Get()->num_workers();
   size_t num_nodes = postoffice_->num_servers() + postoffice_->num_workers();
   if (nodes->control.node.size() == num_nodes) {
     bool mixed_mode = 
@@ -173,7 +172,6 @@ void Van::ProcessAddNodeCommandAtScheduler(Message *msg, Meta *nodes, Meta *reco
         PS_VLOG(1) << "assign rank=" << id << " to node " << node.DebugString();
         node.id = id;
         Connect(node);
-        // Postoffice::Get()->UpdateHeartbeat(node.id, t);
         postoffice_->UpdateHeartbeat(node.id, t);
         connected_nodes_[node_host_ip] = id;
       } else {

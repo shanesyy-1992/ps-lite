@@ -510,34 +510,17 @@ int main(int argc, char *argv[]) {
   const int nthread = v ? atoi(v) : 1;
   LOG(INFO) << "number of threads for the same worker = " << nthread;
 
-  // start system
-  const char* val = CHECK_NOTNULL(Environment::Get()->find("DMLC_ROLE"));
-  std::string role(val);
-  bool is_scheduler_ = role == "scheduler";
-
-  if (is_scheduler_) {
-    StartSchedulerPS(0);
-  } else {
-    // StartServerPS(0);
-    std::thread thread_s(StartServerPS, 0, nullptr);
-    LOG(INFO) << "Postoffice server started.";
-
-    // StartWorkerPS(0);
-    std::thread thread_w(StartWorkerPS, 0, nullptr);
-    LOG(INFO) << "Postoffice worker started.";
-
-    thread_s.join();
-    thread_w.join();
-  }
-  std::chrono::seconds time(5);
-  // std::this_thread::sleep_for(time);
+  StartJointPS(0);
 
   std::thread thread(StartServer);
   thread.join();
 
-  std::this_thread::sleep_for(time);
+  const char* val = CHECK_NOTNULL(Environment::Get()->find("DMLC_ROLE"));
+  std::string role(val);
+  bool is_scheduler = role == "scheduler";
+
   // run worker mode in non_schduler process
-  if (! is_scheduler_)
+  if (! is_scheduler)
   {
     LOG(INFO) << "To start KV Worker.";
     KVWorker<char> kv(0, 0);

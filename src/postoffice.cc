@@ -41,24 +41,24 @@ void Postoffice::InitEnvironment() {
 }
 
 void Postoffice::Start(int customer_id, const char* argv0, const bool do_barrier,
-                       const Role role) {
+                       const Node::Role role) {
   start_mu_.lock();
   if (init_stage_ == 0) {
     InitEnvironment();
   switch(role) {
-    case WORKER: {
+    case Node::WORKER: {
       is_worker_ = true;
       is_server_ = false;
       is_scheduler_ = false;
       break;
     }
-    case SERVER: {
+    case Node::SERVER: {
       is_worker_ = false;
       is_server_ = true;
       is_scheduler_ = false;
       break;
     }
-    case SCHEDULER: {
+    case Node::SCHEDULER: {
       is_worker_ = false;
       is_server_ = false;
       is_scheduler_ = true;
