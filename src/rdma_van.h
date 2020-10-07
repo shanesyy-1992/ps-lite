@@ -234,8 +234,8 @@ class RDMAVan : public Van {
 
 
       std::shared_ptr<Transport> t = is_local_node ?
-          std::make_shared<IPCTransport>(endpoint, mem_allocator_.get()) :
-          std::make_shared<RDMATransport>(endpoint, mem_allocator_.get());
+          std::make_shared<IPCTransport>(endpoint, mem_allocator_.get(), postoffice_) :
+          std::make_shared<RDMATransport>(endpoint, mem_allocator_.get(), postoffice_);
       endpoint->SetTransport(t);
 
       freeaddrinfo(remote_addr);
@@ -608,9 +608,6 @@ class RDMAVan : public Van {
       int ne = ibv_poll_cq(cq_, kMaxConcurrentWorkRequest, wc);
       CHECK_GE(ne, 0);
       for (int i = 0; i < ne; ++i) {
-        if (wc[i].status != IBV_WC_SUCCESS) {
-          __asm__("int3");
-        }
         CHECK(wc[i].status == IBV_WC_SUCCESS)
             << "Failed status \n"
             << ibv_wc_status_str(wc[i].status) << " " << wc[i].status << " "
@@ -813,8 +810,8 @@ class RDMAVan : public Van {
               << " with Transport=" << (is_local_node ? "IPC" : "RDMA");
 
     std::shared_ptr<Transport> t = is_local_node ?
-        std::make_shared<IPCTransport>(endpoint, mem_allocator_.get()) :
-        std::make_shared<RDMATransport>(endpoint, mem_allocator_.get());
+        std::make_shared<IPCTransport>(endpoint, mem_allocator_.get(), postoffice_) :
+        std::make_shared<RDMATransport>(endpoint, mem_allocator_.get(), postoffice_);
     endpoint->SetTransport(t);
 
     RequestContext ctx;

@@ -417,11 +417,11 @@ void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid, int nthread)
       auto end = std::chrono::high_resolution_clock::now();
       accumulated_ms += (end - start).count(); // ns
     }
-    // if (minibatch % 1000 == 0)
-    //   LL << "Gather " << len * sizeof(char)
-    //       << " bytes to each server, repeat=" << repeat
-    //       << ", total_time="
-    //       << accumulated_ms / 1e6 << "ms";
+    if (minibatch % 1000000 == 0)
+      LL << "Gather " << len * sizeof(char)
+          << " bytes to each server, repeat=" << repeat
+          << ", total_time="
+          << accumulated_ms / 1e6 << "ms";
 
     // scatter
     accumulated_ms = 0;
