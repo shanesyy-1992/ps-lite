@@ -31,4 +31,4 @@ DMLC_ROLE=server ./stress_test_benchmark &
 
 # launch worker, with 30MB data per push pull, 10000 rounds, push_then_pull mode
 # DMLC_ROLE=worker BENCHMARK_NTHREAD=1 gdb7.12 -ex run --args ./stress_test_benchmark 30000000 1000000000 0
-DMLC_ROLE=worker BENCHMARK_NTHREAD=2 ./stress_test_benchmark 1000000 1000000000 0
+DMLC_ROLE=worker BENCHMARK_NTHREAD=1 ./stress_test_benchmark 30000000 1000000000 0

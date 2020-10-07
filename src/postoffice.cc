@@ -99,11 +99,9 @@ void Postoffice::Start(int customer_id, const char* argv0, const bool do_barrier
     init_stage_++;
   }
   start_mu_.unlock();
-  LOG(INFO) << "Postoffice to start van.";
 
   // start van
   van_->Start(customer_id);
-  LOG(INFO) << "Postoffice van started.";
 
   start_mu_.lock();
   if (init_stage_ == 1) {
