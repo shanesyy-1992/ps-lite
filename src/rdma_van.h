@@ -25,10 +25,12 @@ namespace ps {
 
 class RDMAVan : public Van {
  public:
-  RDMAVan(Postoffice* postoffice) : Van(postoffice) {
+  RDMAVan(Postoffice* postoffice) : Van(postoffice), postoffice_(postoffice) {
     CHECK_EQ(ibv_fork_init(), 0) << strerror(errno);
   }
   ~RDMAVan() {}
+
+  Postoffice* postoffice_;
 
  protected:  
   void Start(int customer_id) override {
@@ -379,7 +381,7 @@ class RDMAVan : public Van {
           << "\t recver=" << msg.meta.recver
           << "\t tensor_len=" << msg_buf->mrs[0].second
           << "\t remote_idx=" << std::get<2>(remote_tuple)
-          << "\t remote_addr=" << std::get<0>(remote_tuple) 
+          << "\t remote_addr=" << (void *) std::get<0>(remote_tuple) 
           << std::flush;
     } else if (msg.meta.push && !msg.meta.request) { 
       // server, push response
@@ -387,7 +389,7 @@ class RDMAVan : public Van {
           << "\t timestamp=" << msg.meta.timestamp 
           << "\t recver=" << msg.meta.recver
           << "\t remote_idx=" << std::get<2>(remote_tuple)
-          << "\t remote_addr=" << std::get<0>(remote_tuple)
+          << "\t remote_addr=" << (void *) std::get<0>(remote_tuple)
           << std::flush;
     } else if (!msg.meta.push && msg.meta.request) { 
       // worker, pull request
@@ -395,7 +397,7 @@ class RDMAVan : public Van {
           << "\t timestamp=" << msg.meta.timestamp 
           << "\t recver=" << msg.meta.recver
           << "\t remote_idx=" << std::get<2>(remote_tuple)
-          << "\t remote_addr=" << std::get<0>(remote_tuple)
+          << "\t remote_addr=" << (void *) std::get<0>(remote_tuple)
           << std::flush;
     } else if (!msg.meta.push && !msg.meta.request) { 
       // server, pull response
@@ -404,7 +406,7 @@ class RDMAVan : public Van {
           << "\t recver=" << msg.meta.recver
           << "\t tensor_len=" << msg.meta.val_len
           << "\t idx=" << "none"
-          << "\t remote_addr=" << msg.meta.addr
+          << "\t remote_addr=" << (void *) msg.meta.addr
           << std::flush;
     }
 
@@ -606,10 +608,14 @@ class RDMAVan : public Van {
       int ne = ibv_poll_cq(cq_, kMaxConcurrentWorkRequest, wc);
       CHECK_GE(ne, 0);
       for (int i = 0; i < ne; ++i) {
+        if (wc[i].status != IBV_WC_SUCCESS) {
+          __asm__("int3");
+        }
         CHECK(wc[i].status == IBV_WC_SUCCESS)
             << "Failed status \n"
             << ibv_wc_status_str(wc[i].status) << " " << wc[i].status << " "
-            << static_cast<uint64_t>(wc[i].wr_id) << " " << wc[i].vendor_err;
+            << static_cast<uint64_t>(wc[i].wr_id) << " " << wc[i].vendor_err
+            << " postoffice ptr: " << (void *) postoffice_;
             
         WRContext *context = reinterpret_cast<WRContext *>(wc[i].wr_id);
         Endpoint *endpoint =
@@ -639,12 +645,15 @@ class RDMAVan : public Van {
             if (imm == kRendezvousStart) {
               RendezvousStart *req =
                   reinterpret_cast<RendezvousStart *>(mr->addr);
+              LOG(INFO) << "kRendezvousStart addr: " << (void *) req->origin_addr;
               auto trans = CHECK_NOTNULL(endpoint->GetTransport());
               trans->SendRendezvousReply(req, addr_pool_);
               
             } else if (imm == kRendezvousReply) {
               RendezvousReply *resp =
                   reinterpret_cast<RendezvousReply *>(mr->addr);
+              LOG(INFO) << "kRendezvousReply origin addr: " << (void *) resp->origin_addr
+                        << " remote addr: " << (void *) resp->addr;
               uint64_t remote_addr = resp->addr;
               uint64_t origin_addr = resp->origin_addr;
               uint32_t rkey = resp->rkey;

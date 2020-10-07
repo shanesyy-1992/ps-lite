@@ -27,6 +27,7 @@ DMLC_ROLE=scheduler ./stress_test_benchmark &
 # DMLC_ROLE=worker BENCHMARK_NTHREAD=1 gdb7.12 -ex run --args ./stress_test_benchmark 30000000 1000000000 0
 
 export PS_VERBOSE=2
+export BYTEPS_PRINT_RDMA_LOG=1
 
 if [[ $1 = "-g" ]]; then
     DMLC_ROLE=worker BENCHMARK_NTHREAD=1 gdb7.12 -ex run --args ./stress_test_benchmark 300000000 1000000000 0

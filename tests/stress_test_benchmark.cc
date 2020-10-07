@@ -254,6 +254,9 @@ inline void InitOneKeyThenPush(ps::Key ps_key,
   memcpy(ptr_len, &len, sizeof(len));
   server_lens.push_back(lens);
 
+  LOG(INFO) << "Init One Key Then Push, ptr: " << (void *) ptr_key 
+            << " " << (void *) ptr_len << " " << (void *) vals.data();
+
   if (should_push)
     kv->Wait(kv->ZPush(keys, vals, lens));
 }
@@ -414,11 +417,11 @@ void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid, int nthread)
       auto end = std::chrono::high_resolution_clock::now();
       accumulated_ms += (end - start).count(); // ns
     }
-    if (minibatch % 100 == 0)
-      LL << "Gather " << len * sizeof(char)
-          << " bytes to each server, repeat=" << repeat
-          << ", total_time="
-          << accumulated_ms / 1e6 << "ms";
+    // if (minibatch % 1000 == 0)
+    //   LL << "Gather " << len * sizeof(char)
+    //       << " bytes to each server, repeat=" << repeat
+    //       << ", total_time="
+    //       << accumulated_ms / 1e6 << "ms";
 
     // scatter
     accumulated_ms = 0;
@@ -445,11 +448,11 @@ void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid, int nthread)
       accumulated_ms += (end - start).count(); // ns
     }
 
-    if (minibatch % 100 == 0)
-      LL << "Scatter " << len * sizeof(char)
-          << " bytes to each server, repeat=" << repeat
-          << ", total_time="
-          << accumulated_ms / 1e6 << "ms";
+    // if (minibatch % 100 == 0)
+    //   LL << "Scatter " << len * sizeof(char)
+    //       << " bytes to each server, repeat=" << repeat
+    //       << ", total_time="
+    //       << accumulated_ms / 1e6 << "ms";
 
     // // dense
     // accumulated_ms = 0;
@@ -526,8 +529,9 @@ int main(int argc, char *argv[]) {
   //   }
   // }
 
-  if (role != "worker") {
-    std::thread thread(StartServer, role == "scheduler");
+  // if (role != "worker") {
+  {
+    std::thread thread(StartServer, is_scheduler);
     // std::thread thread_sch(StartServer, true /* is_scheduler */);
 
     thread.join();
@@ -536,9 +540,12 @@ int main(int argc, char *argv[]) {
     LOG(INFO) << role << " started server.";
   }
 
+  LOG(INFO) << "PO Server: " << Postoffice::GetServer()
+            << "PO Worker: " << Postoffice::GetWorker();
+
   // run worker mode in non_schduler process
-  // if (! is_scheduler)
-  if (role == "worker")
+  if (! is_scheduler)
+  // if (role == "worker")
   {
     LOG(INFO) << "To start KV Worker.";
     KVWorker<char> kv(0, 0);
