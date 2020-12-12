@@ -20,17 +20,12 @@
 
 using namespace ps;
 
-enum MODE {
-    PUSH_THEN_PULL = 0,
-    PUSH_PULL = 1,
-    PUSH_ONLY = 2, 
-    PULL_ONLY = 3
-};
 std::unordered_map<uint64_t, KVPairs<char> > mem_map;
 bool debug_mode_ = false;
 
 // gpu_idx runs from -1 (cpu) to MAX_GPU_ID
 void aligned_memory_alloc(void** ptr, size_t size, int gpu_idx) {
+  // We set value to be equal to its gpu_idx
   if (gpu_idx == -1) {
     // CPU Alloc
     size_t page_size = sysconf(_SC_PAGESIZE);
@@ -39,12 +34,39 @@ void aligned_memory_alloc(void** ptr, size_t size, int gpu_idx) {
     int ret = posix_memalign(&p, page_size, size_aligned);
     CHECK_EQ(ret, 0) << "posix_memalign error: " << strerror(ret);
     CHECK(p);
-    memset(p, 1, size);
+    memset(p, gpu_idx, size);
     *ptr = p;
   } else {
     // GPU Alloc, malloc should automatically gives page aligned.
     CUDA_CALL(cudaSetDevice(gpu_idx));
     CUDA_CALL(cudaMalloc(ptr, size));
+    CUDA_CALL(cudaMemset(ptr, gpu_idx, size));
+  }
+}
+
+void set_val(void* ptr, size_t size, int gpu_idx, int val) {
+  if (gpu_idx == -1) {
+    // CPU set
+    memset(ptr, val, size);
+  } else {
+    // GPU set
+    CUDA_CALL(cudaSetDevice(gpu_idx));
+    CUDA_CALL(cudaMemset(ptr, val, size));
+  }
+}
+
+void check_val(void* ptr, size_t size, int gpu_idx, int val) {
+  char* p;
+  if (gpu_idx == -1) {
+    // CPU check
+    p = (char *) ptr;
+  } else {
+    // GPU check
+    CUDA_CALL(cudaMemcpy((void *) p, ptr, size, cudaMemcpyDeviceToHost));
+  }
+
+  for (int i = 0; i < size; ++ i) {
+    CHECK_EQ(p[i], (char) val);
   }
 }
 
@@ -62,7 +84,6 @@ void EmptyHandler(const KVMeta &req_meta, const KVPairs<Val> &req_data, KVServer
     CHECK(req_data.lens.size());
     CHECK_EQ(req_data.vals.size(), (size_t)req_data.lens[0]) 
         << "key=" << key << ", " << req_data.vals.size() << ", " << req_data.lens[0];
-
 
     if (mem_map.find(key) == mem_map.end()) {
       size_t len = (size_t) req_data.vals.size();
@@ -116,78 +137,6 @@ void StartServer() {
   RegisterExitCallback([server]() { delete server; });
 }
 
-void push_pull(KVWorker<char>* kv,
-               std::vector<SArray<Key> > &server_keys,
-               std::vector<SArray<char> > &server_vals, 
-               std::vector<SArray<int> > &server_lens,
-               int len, int num_servers, int total_key_num,
-               int how_many_key_per_server, MODE mode, int repeat) {
-  CHECK_GT(mode, 0);
-  switch (mode) {
-    case PUSH_PULL: 
-      LOG(INFO) << "========= PUSH_PULL mode =========";
-      LOG(INFO) << "========= msg_size=" << len*sizeof(char) << " bytes =========";
-      break;
-    case PUSH_ONLY: 
-      LOG(INFO) << "========= PUSH_ONLY mode =========";
-      LOG(INFO) << "========= msg_size=" << len*sizeof(char) << " bytes =========";
-       break;
-    case PULL_ONLY: 
-      LOG(INFO) << "========= PULL_ONLY mode =========";
-      LOG(INFO) << "========= msg_size=" << len*sizeof(char) << " bytes =========";
-      break;
-    default: CHECK(0);
-  }
-
-  std::vector<int> timestamp_list;
-  auto start = std::chrono::high_resolution_clock::now();
-  auto end = std::chrono::high_resolution_clock::now();
-  
-  auto val = Environment::Get()->find("LOG_DURATION");
-  unsigned int log_duration = val ? atoi(val) : 10;
-
-  auto total_val = Environment::Get()->find("TOTAL_DURATION");
-  int total_log_duration = total_val ? atoi(total_val) : 4000000000;
-  
-  int cnt = 0;
-  while (cnt < repeat) {
-    for (int key = 0; key < total_key_num; key++) {
-      auto keys = server_keys[key];
-      auto lens = server_lens[key];
-      auto vals = server_vals[key];
-
-      switch (mode) {
-        case PUSH_PULL: {
-          timestamp_list.push_back(kv->ZPush(keys, vals, lens));
-          timestamp_list.push_back(kv->ZPull(keys, &vals, &lens));
-        } break;
-        case PUSH_ONLY: {
-          timestamp_list.push_back(kv->ZPush(keys, vals, lens));
-        } break;
-        case PULL_ONLY: {
-          timestamp_list.push_back(kv->ZPull(keys, &vals, &lens));
-        } break;
-        default: {
-          CHECK(0);
-          break;
-        } 
-      }
-    }
-
-    for (auto& ts : timestamp_list) { kv->Wait(ts); }
-    timestamp_list.clear();
-    
-    cnt++;
-    if (cnt % log_duration != 0) continue;
-
-    end = std::chrono::high_resolution_clock::now();
-    LL << "Application goodput: " 
-        << 8.0 * len * sizeof(char) * total_key_num * log_duration / (end - start).count()
-        << " Gbps. count = " << cnt;
-    start = std::chrono::high_resolution_clock::now();
-  }
-}
-
 void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid) {
   auto krs = ps::Postoffice::Get()->GetServerKeyRanges();
 
@@ -197,46 +146,45 @@ void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid) {
 
   // init
   int len = (argc > 1) ? atoi(argv[1]) : 1024000;
-  int repeat = (argc > 2) ? atoi(argv[2]) : 10;
-  MODE mode = (argc > 3) ? static_cast<MODE>(atoi(argv[3])) : PUSH_PULL;
-
-  // if true, will use a new unregistered ptr for RDMA comm, used to test performance
-  // of registering new mem locations.
-  bool if_newptr_each_comm = (argc > 4) ? static_cast<bool>(atoi(argv[4])) : false;
+  // int repeat = (argc > 2) ? atoi(argv[2]) : 10;
 
   auto v = Environment::Get()->find("NUM_KEY_PER_SERVER");
-  const int how_many_key_per_server = v ? atoi(v) : 40;
+  const int how_many_key_per_server = v ? atoi(v) : 10;
   const int total_key_num = num_servers * how_many_key_per_server;
 
   std::vector<SArray<char> > server_vals;
   std::vector<SArray<Key> > server_keys;
   std::vector<SArray<int> > server_lens;
+  std::vector<int> gpu_indices;
+  std::vector<void*> gpu_ptrs;
 
   // Round robin alloc each val in different GPUs, cpu_id = -1
   auto local_size_str = Environment::Get()->find("LOCAL_SIZE");
   auto local_size = local_size_str ? atoi(local_size_str) : 0;
-  LOG(INFO) << "GPU LOCAL SIZE " << local_size;
+  LOG(INFO) << "GPU LOCAL SIZE (num of gpu) " << local_size;
 
-  int gpu_id = 0;
   for (int key = 0; key < total_key_num; key++) {
     void* ptr;
     if (local_size == 0) {
       // Normal all cpu unit test
       LOG(INFO) << "Allocating val on CPU with size " << len;
       aligned_memory_alloc(&ptr, len, - 1 /* gpu_idx */);
+      gpu_indices.push_back(-1);
     } else {
-      int idx = gpu_id % (local_size + 1) - 1;
+      int idx = key % (local_size + 1) - 1;
       if (idx != -1) {
         LOG(INFO) << "Allocating val on GPU " << idx << " with size " << len;
       } else {
         LOG(INFO) << "Allocating val on CPU " << " with size " << len;
       }
       aligned_memory_alloc(&ptr, len, idx /* gpu_idx */);
+      gpu_indices.push_back(idx);
     }
+    gpu_ptrs.push_back(ptr);
     SArray<char> vals;
     vals.reset((char*) ptr, len * sizeof(char), [](void *){});
     server_vals.push_back(vals);
-    gpu_id ++;
+    key ++;
   }
 
   // init push, do not count this into time cost
@@ -265,58 +213,23 @@ void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid) {
     kv->Wait(kv->ZPush(keys, vals, lens));
   }
 
-  switch(mode) {
-    case PUSH_THEN_PULL: {
-      LOG(INFO) << "PUSH_THEN_PULL mode";
-      // push
-      uint64_t accumulated_ms = 0;
-      for (int i = 0; i < repeat; ++i) {
-        auto start = std::chrono::high_resolution_clock::now();
-        for (int server = 0; server < num_servers; server++) {
-          auto keys = server_keys[server];
-          auto lens = server_lens[server];
-          auto vals = server_vals[server];
+  int repeat = 3;
+  for (int i = 1; i < repeat; ++ i){
+    for (int key_idx = 0; key_idx < total_key_num; key_idx++) {
+      auto keys = server_keys[key_idx];
+      auto lens = server_lens[key_idx];
+      auto vals = server_vals[key_idx];
+      auto gpu_idx = gpu_indices[key_idx];
+      auto ptr = gpu_ptrs[key_idx];
 
-          kv->Wait(kv->ZPush(keys, vals, lens));
-        }
-        auto end = std::chrono::high_resolution_clock::now();
-        accumulated_ms += (end - start).count(); // ns
-      }
-      LL << "push " << len * sizeof(char)
-          << " bytes to each server, repeat=" << repeat
-          << ", total_time="
-          << accumulated_ms / 1e6 << "ms";
-
-      // pull
-      accumulated_ms = 0;
-      for (int i = 0; i < repeat; ++i) {
-        auto start = std::chrono::high_resolution_clock::now();
-        for (int server = 0; server < num_servers; server++) {
-          auto keys = server_keys[server];
-          auto lens = server_lens[server];
-          auto vals = server_vals[server];
-
-          kv->Wait(kv->ZPull(keys, &vals, &lens));
-        }
-        auto end = std::chrono::high_resolution_clock::now();
-        accumulated_ms += (end - start).count(); // ns
-      }
-
-      LL << "pull " << len * sizeof(char)
-          << " bytes to each server, repeat=" << repeat
-          << ", total_time="
-          << accumulated_ms / 1e6 << "ms";
-    } break;
-    case PUSH_PULL: 
-    case PUSH_ONLY: 
-    case PULL_ONLY: 
-      push_pull(kv, server_keys, server_vals, server_lens, len, num_servers, total_key_num, how_many_key_per_server, mode, repeat);
-      break;
-    default:
-      CHECK(0) << "unknown mode " << mode;
+      kv->Wait(kv->ZPush(keys, vals, lens));
+      // Set the raw data to absolutely wrong ones and pull
+      // the correct value should be gpu_idx.
+      set_val(ptr, len, gpu_idx, -2);
+      kv->Wait(kv->ZPull(keys, &vals, &lens));
+      check_val(ptr, len, gpu_idx, gpu_idx);
+    }
   }
-
-
 }
 
 int main(int argc, char *argv[]) {
