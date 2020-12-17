@@ -21,6 +21,7 @@ export DMLC_NUM_SERVER=1
 export DMLC_PS_ROOT_URI=${NODE_ONE_IP}  # try eth2
 export BYTEPS_ORDERED_HOSTS=${NODE_ONE_IP},${NODE_TWO_IP}
 export DMLC_NODE_HOST=${NODE_TWO_IP}  # by default it's remote
+export UCX_RDMA_CM_SOURCE_ADDRESS=${NODE_TWO_IP}
 
 export DMLC_PS_ROOT_PORT=9194     # scheduler's port (can random choose)
 export DMLC_INTERFACE=eth2        # my RDMA interface
@@ -28,7 +29,9 @@ export DMLC_ENABLE_RDMA=0
 export DMLC_ENABLE_UCX=1          # test ucx
 # export UCX_TLS=all                # not working
 # export UCX_TLS=ib,tcp           # working
-export UCX_TLS=ib,tcp,cuda_ipc,cuda_copy
+#export UCX_TLS=ib,tcp,cuda_ipc,cuda_copy
+export UCX_TLS=ib,cuda_ipc,cuda_copy
+export UCX_MEMTYPE_CACHE=n
 #export UCX_RNDV_SCHEME=put_zcopy
 export BYTEPS_UCX_SHORT_THRESH=0
 
@@ -48,6 +51,7 @@ then
     echo "This is scheduler node."
     export BYTEPS_NODE_ID=0
     export DMLC_NODE_HOST=${NODE_ONE_IP}
+    export UCX_RDMA_CM_SOURCE_ADDRESS=${NODE_ONE_IP}
     DMLC_ROLE=scheduler ./test_benchmark &
     # launch server
     DMLC_ROLE=server ./test_benchmark 
