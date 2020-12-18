@@ -225,9 +225,10 @@ void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid) {
       LOG(INFO) << "Allocating val on CPU with size " << len;
       aligned_memory_alloc(&ptr, len, - 1 /* gpu_idx */);
     } else {
-      int idx = gpu_id % (local_size + 1) - 1;
+      // int idx = gpu_id % (local_size + 1) - 1;
+      int idx = gpu_id % local_size;
       if (idx != -1) {
-        LOG(INFO) << "Allocating val on GPU " << idx << " with size " << len;
+        LOG(INFO) << "Allocating val on GPU " << idx << " key " << key << " size " << len;
       } else {
         LOG(INFO) << "Allocating val on CPU " << " with size " << len;
       }
@@ -236,15 +237,24 @@ void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid) {
     SArray<char> vals;
     vals.reset((char*) ptr, len * sizeof(char), [](void *){});
     server_vals.push_back(vals);
-    gpu_id ++;
+    gpu_id++;
   }
 
+  auto time_mem_reg_cost_str = Environment::Get()->find("TIME_MEM_REG_COST");
+  auto time_mem_reg_cost = time_mem_reg_cost_str ? atoi(time_mem_reg_cost_str) : 0;
   // init push, do not count this into time cost
   for (int key = 0; key < total_key_num; key++) {
     int server = key % num_servers;
     PS_VLOG(1) << "key=" << key << " assigned to server " << server;
 
     auto vals = server_vals[key];
+    if (time_mem_reg_cost) {
+    /* only use vals of key 0, so that other buffers are not registered for
+     * RDMA. This way the memory registration cost is included in the timing
+     * later on.
+     */
+      vals = server_vals[0];
+    }
 
     // page aligned keys
     void* ptr_key;

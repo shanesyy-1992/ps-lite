@@ -30,7 +30,8 @@ export DMLC_ENABLE_UCX=1          # test ucx
 # export UCX_TLS=all                # not working
 # export UCX_TLS=ib,tcp           # working
 #export UCX_TLS=ib,tcp,cuda_ipc,cuda_copy
-export UCX_TLS=ib,cuda_ipc,cuda_copy
+#export UCX_TLS=ib,cuda_ipc,cuda_copy
+export UCX_TLS=ib,rc,cuda_copy
 export UCX_MEMTYPE_CACHE=n
 #export UCX_RNDV_SCHEME=put_zcopy
 export BYTEPS_UCX_SHORT_THRESH=0
@@ -39,7 +40,7 @@ export LOCAL_SIZE=2               # test ucx gdr
 #export CUDA_VISIBLE_DEVICES=0,1,2,3
 export CUDA_VISIBLE_DEVICES=0,1
 #export UCX_IB_GPU_DIRECT_RDMA=no
-export UCX_IB_GPU_DIRECT_RDMA=yes
+export UCX_IB_GPU_DIRECT_RDMA=y
 
 export BYTEPS_ENABLE_IPC=0
 
@@ -59,6 +60,7 @@ fi
 
 export NUM_KEY_PER_SERVER=8000
 export LOG_DURATION=1
+export TIME_MEM_REG_COST=1
 # launch worker, with 30MB data per push pull, 10000 rounds, push_then_pull mode
 #DMLC_ROLE=worker BENCHMARK_NTHREAD=1 ./test_benchmark 30000000 10240 1
 DMLC_ROLE=worker BENCHMARK_NTHREAD=1 ./test_benchmark  4096000 2 2
