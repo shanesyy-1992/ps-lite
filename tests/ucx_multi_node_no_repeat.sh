@@ -1,3 +1,5 @@
+export UCX_IB_SL=5
+export export UCX_IB_TRAFFIC_CLASS=236
 function cleanup() {
     echo "kill all testing process of ps lite for user $USER"
     if [[ $EUID -ne 0 ]]; then
@@ -63,7 +65,7 @@ export LOG_DURATION=1
 export TIME_MEM_REG_COST=1
 # launch worker, with 30MB data per push pull, 10000 rounds, push_then_pull mode
 #DMLC_ROLE=worker BENCHMARK_NTHREAD=1 ./test_benchmark 30000000 10240 1
-DMLC_ROLE=worker BENCHMARK_NTHREAD=1 ./test_benchmark  4096000 2 2
+DMLC_ROLE=worker BENCHMARK_NTHREAD=1 ./test_benchmark  4096000 2000000 2
 # for correctness test, use this following line and replace previous
 # scheduler / server binary with ./test_correctness
 
