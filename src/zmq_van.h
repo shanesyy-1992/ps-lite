@@ -49,6 +49,10 @@ class ZMQVan : public Van {
     return std::string("zeromq");
   }
 
+  int MemReg(void *addr, size_t length, int should_alloc) {
+    return 0;
+  }
+
  public:
   void Start(int customer_id, bool standalone) {
     // start zmq

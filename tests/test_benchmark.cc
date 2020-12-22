@@ -45,6 +45,7 @@ void aligned_memory_alloc(void** ptr, size_t size, int gpu_idx) {
     // GPU Alloc, malloc should automatically gives page aligned.
     CUDA_CALL(cudaSetDevice(gpu_idx));
     CUDA_CALL(cudaMalloc(ptr, size));
+    ps::Postoffice::Get()->van()->MemReg(*ptr, size, 0);
   }
 }
 

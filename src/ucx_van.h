@@ -340,6 +340,26 @@ class UCXVan : public Van {
     return std::string("ucx");
   }
 
+  int MemReg(void *addr, size_t length, int should_alloc) {
+    ucp_mem_map_params_t mem_map_params;
+    memset(&mem_map_params, 0, sizeof(ucp_mem_map_params_t));
+    mem_map_params.field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
+                                UCP_MEM_MAP_PARAM_FIELD_LENGTH  |
+                                UCP_MEM_MAP_PARAM_FIELD_FLAGS;
+    mem_map_params.address = addr;
+    mem_map_params.length = length;
+    mem_map_params.flags = UCP_MEM_MAP_NONBLOCK;
+    if (should_alloc)
+    {
+        mem_map_params.flags |= UCP_MEM_MAP_ALLOCATE;
+    }
+    printf("xxxxx map address:%p\n", addr);
+    ucp_mem_h memh = NULL;
+    CHECK_STATUS(ucp_mem_map(context_, &mem_map_params, &memh));
+    return 0;
+  }
+
+
  protected:
   void Start(int customer_id, bool standalone) override {
     start_mu_.lock();
@@ -535,24 +555,6 @@ class UCXVan : public Van {
     total_len += keys.size() + vals.size() + lens.size();
 
     return total_len;
-  }
-
-  int MemReg(void *addr, int should_alloc) {
-    ucp_mem_map_params_t mem_map_params;
-    memset(&mem_map_params, 0, sizeof(ucp_mem_map_params_t));
-    mem_map_params.field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
-                                UCP_MEM_MAP_PARAM_FIELD_LENGTH  |
-                                UCP_MEM_MAP_PARAM_FIELD_FLAGS;
-    mem_map_params.address = *addr;
-    mem_map_params.length = size;
-    mem_map_params.flags = UCP_MEM_MAP_NONBLOCK;
-    if (should_alloc)
-    {
-        mem_map_params.flags |= UCP_MEM_MAP_ALLOCATE;
-    }
-    printf("map address:%p\n",*addr);
-    ucp_mem_h memh = NULL;
-    CHECK_STATUS(ucp_mem_map(ucp_context, &mem_map_params, &memh));
   }
 
  private:

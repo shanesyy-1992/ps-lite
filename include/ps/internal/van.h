@@ -119,6 +119,10 @@ class Van {
    */
   virtual std::string GetType() const = 0;
 
+  virtual int MemReg(void *addr, size_t length, int should_alloc) {
+    return 0;
+  }
+
  protected:
 
   /**
