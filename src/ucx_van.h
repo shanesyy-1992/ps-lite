@@ -537,6 +537,24 @@ class UCXVan : public Van {
     return total_len;
   }
 
+  int MemReg(void *addr, int should_alloc) {
+    ucp_mem_map_params_t mem_map_params;
+    memset(&mem_map_params, 0, sizeof(ucp_mem_map_params_t));
+    mem_map_params.field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
+                                UCP_MEM_MAP_PARAM_FIELD_LENGTH  |
+                                UCP_MEM_MAP_PARAM_FIELD_FLAGS;
+    mem_map_params.address = *addr;
+    mem_map_params.length = size;
+    mem_map_params.flags = UCP_MEM_MAP_NONBLOCK;
+    if (should_alloc)
+    {
+        mem_map_params.flags |= UCP_MEM_MAP_ALLOCATE;
+    }
+    printf("map address:%p\n",*addr);
+    ucp_mem_h memh = NULL;
+    CHECK_STATUS(ucp_mem_map(ucp_context, &mem_map_params, &memh));
+  }
+
  private:
   enum Tags { UCX_TAG_META = 0, UCX_TAG_DATA };
 
