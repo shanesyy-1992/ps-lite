@@ -33,7 +33,7 @@ std::mutex g_log_mutex;
  do { \
    if (_prio <= Postoffice::Get()->verbose()) { \
      std::lock_guard<std::mutex> lock(g_log_mutex); \
-     LOG(INFO) << (_my_node)->ShortDebugString() << " " << _x << std::endl; \
+     LOG(INFO) << (_my_node)->ShortDebugString() << " " << _x; \
    } \
  } while(0)
 
@@ -47,6 +47,9 @@ std::mutex g_log_mutex;
     (_req)->completed     = false; \
     ucp_request_free(_req); \
   } while(0)
+
+const int UCX_OPTION_META = -1;
+const int UCX_OPTION_DATA = -2;
 
 class UCXVan;
 
@@ -334,7 +337,9 @@ class UCXVan : public Van {
     short_send_thresh_ = GetEnv("BYTEPS_UCX_SHORT_THRESH", 4096);
   }
 
-  ~UCXVan() {}
+  ~UCXVan() {
+    LOG(INFO) << "~UCXVan";
+  }
 
   virtual std::string GetType() const {
     return std::string("ucx");
@@ -458,27 +463,32 @@ class UCXVan : public Van {
       return -1;
     }
 
-    msg.meta.val_len = 0;
-    msg.meta.option  = 0;
+    msg.meta.option = UCX_OPTION_META;
     if (IsValidPushpull(msg)) {
       if (msg.meta.request) {
         msg.meta.key = DecodeKey(msg.data[0]);
       }
       if (IsDataMsg(msg)) {
         msg.meta.val_len = msg.data[1].size();
+        msg.meta.option = UCX_OPTION_DATA;
+      } else if (!msg.meta.push && msg.meta.request) {
+        // Save pull data address
+        std::lock_guard<std::mutex> lock(w_pool_mtx_);
+        CHECK(msg.meta.addr != 0);
+        w_pool_[msg.meta.key] = (char*) msg.meta.addr;
       }
     }
 
-    if (msg.meta.push && msg.meta.request) {
-      // Save push data address for later pull
-      w_pool_[msg.meta.key] = msg.data[1].data();
-    }
-
     int len = SendMeta(ep, msg);
+    // meta only
+    if (msg.meta.option == UCX_OPTION_META) {
+      return len;
+    }
+    // meta with data
     if (len == GetPackMetaLen(msg.meta) + msg.meta.val_len) {
       return len + msg.meta.data_size; // No data, or data was bundled with meta
     }
-
+    // data
     CHECK(IsDataMsg(msg));
 
     ucp_tag_t tag       = MakeTag(my_node_.id, UCX_TAG_DATA);
@@ -507,8 +517,9 @@ class UCXVan : public Van {
     msg->meta.sender = buf.sender;
     msg->meta.recver = my_node_.id;
 
+    // for pull request, we still need to set the key
     if (!IsValidPushpull(*msg) || (msg->meta.push && !msg->meta.request)) {
-      CHECK_EQ(msg->meta.val_len, 0);
+      CHECK_EQ(msg->meta.option, UCX_OPTION_META);
       return total_len;
     }
 
@@ -659,13 +670,14 @@ class UCXVan : public Van {
   void PostRecvData(UCXRequest *meta_req) {
     RawMeta *meta = reinterpret_cast<RawMeta*>(meta_req->data.raw_meta);
     int val_len   = meta->val_len;
-    if (val_len == 0) {
-      UCX_LOG(2, " rx just meta, sender " << meta_req->data.sender);
+    if (val_len == 0 || meta->option == UCX_OPTION_META) {
+      UCX_LOG(2, " rx just meta, sender " << meta_req->data.sender << " val_len: " << val_len);
       CHECK_EQ(meta_req->data.buffer, nullptr);
       recv_buffers_.Push(meta_req->data);
-    } else if (meta->option) {
-      UCX_LOG(2, " rx meta with data, data len: " << val_len);
-      meta_req->data.buffer = GetRxBuffer(meta->key, val_len, meta->push);
+    } else if (meta->option > 0) {
+      UCX_LOG(2, " rx meta with data, data len: " << val_len << " option: " << meta->option);
+      meta_req->data.buffer = GetRxBuffer(meta->key, meta_req->data.sender,
+                                          val_len, meta->push);
       memcpy(meta_req->data.buffer, meta_req->data.raw_meta + meta->option, val_len);
       recv_buffers_.Push(meta_req->data);
     } else {
