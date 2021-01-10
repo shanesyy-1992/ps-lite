@@ -37,7 +37,7 @@ class RDMAVan : public Van {
     return 0;
   }
 
- protected:  
+ protected:
   void Start(int customer_id, bool standalone) override {
     start_mu_.lock();
     should_stop_ = false;
@@ -121,7 +121,9 @@ class RDMAVan : public Van {
     rdma_destroy_event_channel(event_channel_);
   }
 
-  int Bind(const Node &node, int max_retry) override {
+  int Bind(Node& node, int max_retry) override {
+    CHECK_EQ(my_node_.num_ports, 1)
+      << "RDMA van does not support multiple ports";    
     CHECK(rdma_create_id(event_channel_, &listener_, nullptr, RDMA_PS_TCP) == 0)
         << "Create RDMA connection identifier failed";
     
