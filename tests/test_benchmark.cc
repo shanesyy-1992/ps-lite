@@ -1,22 +1,13 @@
 #include <chrono>
 #include <cmath>
-#include <thread>
 #include <cstdlib>
 #include <unistd.h>
-#include <cuda_runtime.h>
 #include "ps/ps.h"
 
 #define DIVUP(x, y) (((x)+(y)-1)/(y))
 #define ROUNDUP(x, y) (DIVUP((x), (y))*(y))
 #define DEBUG_PRINT_TENSOR_VALUE(X) (*((float *)(X) + 0))
 #define DEBUG_PRINT_TENSOR_ADDRESS(X) (reinterpret_cast<uint64_t>(X))
-
-#define CUDA_CALL(func)                                      \
-  {                                                          \
-    cudaError_t e = (func);                                  \
-    CHECK(e == cudaSuccess || e == cudaErrorCudartUnloading) \
-        << "CUDA: " << cudaGetErrorString(e);                \
-  }
 
 using namespace ps;
 
@@ -35,23 +26,15 @@ bool debug_mode_ = false;
 int num_ports = 1;
 bool enable_recv_buffer = false;
 
-// gpu_idx runs from -1 (cpu) to MAX_GPU_ID
-void aligned_memory_alloc(void** ptr, size_t size, int gpu_idx) {
-  if (gpu_idx == -1) {
-    // CPU Alloc
-    size_t page_size = sysconf(_SC_PAGESIZE);
-    void* p;
-    int size_aligned = ROUNDUP(size, page_size);
-    int ret = posix_memalign(&p, page_size, size_aligned);
-    CHECK_EQ(ret, 0) << "posix_memalign error: " << strerror(ret);
-    CHECK(p);
-    memset(p, 1, size);
-    *ptr = p;
-  } else {
-    // GPU Alloc, malloc should automatically gives page aligned.
-    CUDA_CALL(cudaSetDevice(gpu_idx));
-    CUDA_CALL(cudaMalloc(ptr, size));
-  }
+void aligned_memory_alloc(void** ptr, size_t size) {
+  size_t page_size = sysconf(_SC_PAGESIZE);
+  void* p;
+  int size_aligned = ROUNDUP(size, page_size);
+  int ret = posix_memalign(&p, page_size, size_aligned);
+  CHECK_EQ(ret, 0) << "posix_memalign error: " << strerror(ret);
+  CHECK(p);
+  memset(p, 1, size);
+  *ptr = p;
 }
 
 void float_sum(float *dst, float *src, size_t len) {
@@ -87,16 +70,16 @@ void EmptyHandler(const KVMeta &req_meta, const KVPairs<Val> &req_data, KVServer
       size_t len = (size_t) req_data.vals.size();
 
       void* ptr_val;
-      aligned_memory_alloc(&ptr_val, len, -1);  
+      aligned_memory_alloc(&ptr_val, len);  
       mem_map[key].vals.reset((char*)ptr_val, len, [](void *){ });
 
       void* ptr_key;
-      aligned_memory_alloc(&ptr_key, sizeof(Key), -1);  
+      aligned_memory_alloc(&ptr_key, sizeof(Key));  
       mem_map[key].keys.reset((Key*)ptr_key, 1, [](void *){ });
       memcpy(ptr_key, &key, sizeof(Key));
 
       void* ptr_len;
-      aligned_memory_alloc(&ptr_len, sizeof(int), -1);  
+      aligned_memory_alloc(&ptr_len, sizeof(int));
       mem_map[key].lens.reset((int*)ptr_len, 1, [](void *){ });
       memcpy(ptr_len, &len, sizeof(int));
     }
@@ -220,7 +203,7 @@ void StartServer(int argc, char *argv[]) {
   ps::Postoffice::Get()->Barrier(0, kWorkerGroup + kServerGroup);
 }
 
-void push_pull(KVWorker<char>* kv,
+void push_pull(KVWorker<char> &kv, 
                std::vector<SArray<Key> > &server_keys,
                std::vector<SArray<char> > &server_vals, 
                std::vector<SArray<int> > &server_lens,
@@ -249,9 +232,6 @@ void push_pull(KVWorker<char>* kv,
   
   auto val = Environment::Get()->find("LOG_DURATION");
   unsigned int log_duration = val ? atoi(val) : 10;
-
-  auto total_val = Environment::Get()->find("TOTAL_DURATION");
-  int total_log_duration = total_val ? atoi(total_val) : 4000000000;
   
   int cnt = 0;
   while (cnt < repeat) {
@@ -262,14 +242,14 @@ void push_pull(KVWorker<char>* kv,
 
       switch (mode) {
         case PUSH_PULL: {
-          timestamp_list.push_back(kv->ZPush(keys, vals, lens));
-          timestamp_list.push_back(kv->ZPull(keys, &vals, &lens));
+          timestamp_list.push_back(kv.ZPush(keys, vals, lens));
+          timestamp_list.push_back(kv.ZPull(keys, &vals, &lens));
         } break;
         case PUSH_ONLY: {
-          timestamp_list.push_back(kv->ZPush(keys, vals, lens));
+          timestamp_list.push_back(kv.ZPush(keys, vals, lens));
         } break;
         case PULL_ONLY: {
-          timestamp_list.push_back(kv->ZPull(keys, &vals, &lens));
+          timestamp_list.push_back(kv.ZPull(keys, &vals, &lens));
         } break;
         default: {
           CHECK(0);
@@ -278,7 +258,7 @@ void push_pull(KVWorker<char>* kv,
       }
     }
 
-    for (auto& ts : timestamp_list) { kv->Wait(ts); }
+    for (auto& ts : timestamp_list) { kv.Wait(ts); }
     timestamp_list.clear();
     
     cnt++;
@@ -292,7 +272,9 @@ void push_pull(KVWorker<char>* kv,
   }
 }
 
-void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid) {
+void RunWorker(int argc, char *argv[]) {
+  if (!IsWorker()) return;
+  KVWorker<char> kv(0, 0);
   auto krs = ps::Postoffice::Get()->GetServerKeyRanges();
 
   const int num_servers = krs.size();
@@ -304,89 +286,28 @@ void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid) {
   int repeat = (argc > 2) ? atoi(argv[2]) : 10;
   MODE mode = (argc > 3) ? static_cast<MODE>(atoi(argv[3])) : PUSH_PULL;
 
-  // if true, will use a new unregistered ptr for RDMA comm, used to test performance
-  // of registering new mem locations.
-  bool if_newptr_each_comm = (argc > 4) ? static_cast<bool>(atoi(argv[4])) : false;
-
   auto v = Environment::Get()->find("NUM_KEY_PER_SERVER");
 
   const int how_many_key_per_server = v ? atoi(v) : 40;
   const int total_key_num = num_servers * how_many_key_per_server;
 
-// <<<<<<< HEAD
-//   std::vector<SArray<char> > server_vals;
-//   std::vector<SArray<Key> > server_keys;
-//   std::vector<SArray<int> > server_lens;
-// 
-//   // Round robin alloc each val in different GPUs, cpu_id = -1
-//   auto local_size_str = Environment::Get()->find("LOCAL_SIZE");
-//   auto local_size = local_size_str ? atoi(local_size_str) : 0;
-//   LOG(INFO) << "GPU LOCAL SIZE " << local_size;
-// 
-//   int gpu_id = 0;
-//   for (int key = 0; key < total_key_num; key++) {
-//     void* ptr;
-//     if (local_size == 0) {
-//       // Normal all cpu unit test
-//       LOG(INFO) << "Allocating val on CPU with size " << len;
-//       aligned_memory_alloc(&ptr, len, - 1 /* gpu_idx */);
-//     } else {
-//       int idx = gpu_id % (local_size + 1) - 1;
-//       if (idx != -1) {
-//         LOG(INFO) << "Allocating val on GPU " << idx << " with size " << len;
-//       } else {
-//         LOG(INFO) << "Allocating val on CPU " << " with size " << len;
-//       }
-//       aligned_memory_alloc(&ptr, len, idx /* gpu_idx */);
-//     }
-//     SArray<char> vals;
-//     vals.reset((char*) ptr, len * sizeof(char), [](void *){});
-//     server_vals.push_back(vals);
-//     gpu_id ++;
-// =======
-//   auto my_rank = ps::Postoffice::Get()->my_rank();
-//   std::vector<SArray<char>> server_vals;
-//   std::vector<SArray<Key>> server_keys;
-//   std::vector<SArray<int>> server_lens;
-// 
-//   GenerateVals(total_key_num, my_rank, len, num_ports, &server_vals);
-//   GenerateKeys(total_key_num, &server_keys);
-//   GenerateLens(total_key_num, len, &server_lens);
-// 
-//   // place a barrier to make sure the server has all the buffers registered.
-//   if (enable_recv_buffer) {
-//     ps::Postoffice::Get()->Barrier(0, kWorkerGroup + kServerGroup);
-// >>>>>>> origin/byteps
+  auto my_rank = ps::Postoffice::Get()->my_rank();
+  std::vector<SArray<char>> server_vals;
+  std::vector<SArray<Key>> server_keys;
+  std::vector<SArray<int>> server_lens;
+
+  GenerateVals(total_key_num, my_rank, len, num_ports, &server_vals);
+  GenerateKeys(total_key_num, &server_keys);
+  GenerateLens(total_key_num, len, &server_lens);
+
+  // place a barrier to make sure the server has all the buffers registered.
+  if (enable_recv_buffer) {
+    ps::Postoffice::Get()->Barrier(0, kWorkerGroup + kServerGroup);
   }
 
   // init push, do not count this into time cost
   for (int key = 0; key < total_key_num; key++) {
-// <<<<<<< HEAD
-//     int server = key % num_servers;
-//     PS_VLOG(1) << "key=" << key << " assigned to server " << server;
-// 
-//     auto vals = server_vals[key];
-// 
-//     // page aligned keys
-//     void* ptr_key;
-//     aligned_memory_alloc(&ptr_key, sizeof(Key), -1);
-//     SArray<Key> keys;
-//     keys.reset((Key*) ptr_key, 1, [](void *){});
-//     ps::Key ps_key = krs[server].begin() + key;
-//     memcpy(ptr_key, &ps_key, sizeof(Key));
-//     server_keys.push_back(keys);
-// 
-//     // page aligned vals
-//     void* ptr_len;
-//     aligned_memory_alloc(&ptr_len, sizeof(int), -1);
-//     SArray<int> lens;
-//     lens.reset((int*) ptr_len, 1, [](void *){});
-//     memcpy(ptr_len, &len, sizeof(len));
-//     server_lens.push_back(lens);
-//     kv->Wait(kv->ZPush(keys, vals, lens));
-// =======
-//     kv.Wait(kv.ZPush(server_keys[key], server_vals[key], server_lens[key]));
-// >>>>>>> origin/byteps
+    kv.Wait(kv.ZPush(server_keys[key], server_vals[key], server_lens[key]));
   }
 
   switch(mode) {
@@ -401,7 +322,7 @@ void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid) {
           auto lens = server_lens[server];
           auto vals = server_vals[server];
 
-          kv->Wait(kv->ZPush(keys, vals, lens));
+          kv.Wait(kv.ZPush(keys, vals, lens));
         }
         auto end = std::chrono::high_resolution_clock::now();
         accumulated_ms += (end - start).count(); // ns
@@ -420,7 +341,7 @@ void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid) {
           auto lens = server_lens[server];
           auto vals = server_vals[server];
 
-          kv->Wait(kv->ZPull(keys, &vals, &lens));
+          kv.Wait(kv.ZPull(keys, &vals, &lens));
         }
         auto end = std::chrono::high_resolution_clock::now();
         accumulated_ms += (end - start).count(); // ns
@@ -444,11 +365,7 @@ void RunWorker(int argc, char *argv[], KVWorker<char>* kv, int tid) {
 int main(int argc, char *argv[]) {
   // disable multi-threaded processing first
   setenv("ENABLE_SERVER_MULTIPULL", "0", 1);
-
   // init env var options
-  auto v = Environment::Get()->find("BENCHMARK_NTHREAD");
-  const int nthread = v ? atoi(v) : 1;
-  LOG(INFO) << "number of threads for the same worker = " << nthread;
   const char *npstr = Environment::Get()->find("DMLC_NUM_PORTS");
   if (npstr) num_ports = atoi(npstr);
   LOG(INFO) << num_ports << " ports per node";
@@ -465,17 +382,7 @@ int main(int argc, char *argv[]) {
   // setup server nodes
   StartServer(argc, argv);
   // run worker nodes
-  if (IsWorker()) {
-    KVWorker<char> kv(0, 0);
-    std::vector<std::thread> threads;
-    for (int i = 0; i < nthread; ++i) {
-      threads.emplace_back(RunWorker, argc, argv, &kv, threads.size());
-    }
-    for (int i = 0; i < nthread; ++i) {
-      threads[i].join();
-      LOG(INFO) << "Thread " << i << " is done.";
-    }
-  }
+  RunWorker(argc, argv);
   // stop system
   Finalize(0, true);
   return 0;
