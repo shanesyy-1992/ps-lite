@@ -2,7 +2,8 @@ export BINARY=./test_benchmark_cuda
 export BINARY=./test_benchmark_stress
 # export BINARY=./test_benchmark_ucx
 export ARGS="4096000 999999999 1"
-export ARGS="30000000 999999999 1"
+export ARGS="30000000 1000000000 0"
+# 30000000 999999999 1"
 
 function cleanup() {
     echo "kill all testing process of ps lite for user $USER"
