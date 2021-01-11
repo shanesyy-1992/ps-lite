@@ -1,6 +1,8 @@
 export BINARY=./test_benchmark_cuda
 export BINARY=./test_benchmark_stress
-export ARGS="4096000 10240 1"
+# export BINARY=./test_benchmark_ucx
+export ARGS="4096000 999999999 1"
+export ARGS="30000000 999999999 1"
 
 function cleanup() {
     echo "kill all testing process of ps lite for user $USER"
@@ -29,8 +31,8 @@ export DMLC_PS_ROOT_PORT=${DMLC_PS_ROOT_PORT:-12279} # scheduler's port (can ran
 export UCX_IB_TRAFFIC_CLASS=236
 export DMLC_INTERFACE=eth2        # my RDMA interface
 export UCX_TLS=ib,cuda
-export DMLC_ENABLE_RDMA=0
-export DMLC_ENABLE_UCX=1          # test ucx
+export DMLC_ENABLE_RDMA=1
+export DMLC_ENABLE_UCX=${DMLC_ENABLE_UCX:-1}          # enable ucx
 # export PS_VERBOSE=2
 
 # export UCX_MEMTYPE_CACHE=n
