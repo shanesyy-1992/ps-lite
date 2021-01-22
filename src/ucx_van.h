@@ -170,6 +170,8 @@ public:
 
     UCX_LOGE(2, "ep created " << ucx_ep->ep << " id: " << ucx_ep->id);
 
+    // UCX ep creation is a non-blocking routine. Exchange ep ids to ensure the
+    // connection is setup and ready for use.
     ucs_status_ptr_t req = ucp_am_send_nb(ucx_ep->ep, UCX_AM_NODE_INFO_REQ, &ucx_ep->id,
                                           sizeof(ucx_ep->id), ucp_dt_make_contig(1),
                                           AmReqCompletedCb, UCP_AM_SEND_REPLY);
@@ -373,6 +375,10 @@ public:
   int                                                  reconnect_tmo_;
 };
 
+// This class:
+// 1. Manages memory allocations/registrations on the server side.
+// 2. Finds proper receive buffer for the pulled data on worker (looking for
+//    the memory used for push)
 class UCXRecvPool {
 public:
   UCXRecvPool() {}
@@ -431,9 +437,6 @@ public:
       }
     }
 
-    //UCX_LOG(2, "register rx buf for " << key << " | " << sender << ", length "
-      //      <<  msg.data[1].size());
-
     rpool_[key][sender] = UCXAddress(msg.data[1].data(), msg.data[1].size(), true);
   }
 
@@ -456,6 +459,9 @@ private:
   std::unordered_map<Key, MemAddresses>             rpool_;
 };
 
+// This class represent UCX communication instance. It maintains UCX context,
+// worker and listener objects. Also it manages UCX eps creation/destruction by
+// using UCXEndpointsPool class.
 class UCXContext {
 public:
   UCXContext(UCXRecvPool *rx_pool, int idx) :
@@ -504,6 +510,8 @@ public:
     van_     = van;
   }
 
+  // Create UCX listener object, so the remote side could connect by the given
+  // address.
   void Listen(int port) {
     auto val = Environment::Get()->find("DMLC_NODE_HOST");
     struct sockaddr_in addr = {};
@@ -538,12 +546,13 @@ public:
     ucp_tag_recv_info_t info;
     int cnt = 0;
 
+    // Poll all underlying transports(IB, shm, tcp, etc)
     cnt = ucp_worker_progress(worker_);
     if (cnt == 0) {
       return;
     }
-    UCX_LOGE(1, "POLL ");
 
+    // Check whether any meta data or push/pull request arrived
     do {
       // only match the highest bit of tag.
       msg = ucp_tag_probe_nb(worker_,
@@ -768,6 +777,9 @@ class UCXVan : public Van {
 
     UCX_LOG(2, "Start/Bind UCX Van, num ports " << my_node_.num_ports);
 
+    // Create separate UCX context for every device. If device is GPU, set the
+    // corresponding cuda device before UCX context creation. This way UCX will
+    // automatically select the most optimal NICs for using with this device.
     for (int i = 0; i < my_node_.num_ports; ++i) {
       int dev_id = my_node_.dev_ids[i];
       CHECK_GE(dev_id, 0);
