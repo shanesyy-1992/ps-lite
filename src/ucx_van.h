@@ -798,19 +798,19 @@ class UCXVan : public Van {
   }
 
   int Bind(Node &node, int max_retry) override {
-    contexts_.reserve(my_node_.num_ports);
+    contexts_.reserve(node.num_ports);
 
-    UCX_LOG(2, "Start/Bind UCX Van, num ports " << my_node_.num_ports);
+    UCX_LOG(2, "Start/Bind UCX Van, num ports " << node.num_ports);
 
     // Create separate UCX context for every device. If device is GPU, set the
     // corresponding cuda device before UCX context creation. This way UCX will
     // automatically select the most optimal NICs for using with this device.
-    for (int i = 0; i < my_node_.num_ports; ++i) {
-      int dev_id = my_node_.dev_ids[i];
+    for (int i = 0; i < node.num_ports; ++i) {
+      int dev_id = node.dev_ids[i];
       CHECK_GE(dev_id, 0);
 
 #if DMLC_USE_CUDA
-      if (my_node_.dev_types[i] == GPU) {
+      if (node.dev_types[i] == GPU) {
         cudaError_t cerr = cudaSetDevice(dev_id);
 
         if (cudaSuccess != cerr) {
@@ -818,20 +818,17 @@ class UCXVan : public Van {
         }
       }
 #else
-      CHECK_NE(my_node_.dev_types[i], GPU) << "Please build with USE_CUDA=1";
+      CHECK_NE(node.dev_types[i], GPU) << "Please build with USE_CUDA=1";
 #endif
-      contexts_[dev_id] = std::make_unique<UCXContext>(rx_pool_.get(), i);
+      contexts_[dev_id] = std::make_unique<UCXContext>(rx_pool_.get(), dev_id);
       contexts_[dev_id]->Init(&my_node_, this);
+      contexts_[dev_id]->Listen(node.ports[i]);
       UCX_LOG(2, "Create ctx[" << i << "]: dev id " << dev_id << ", port "
-              << my_node_.ports[i]);
+              << node.ports[i]);
     }
 
     polling_thread_.reset(new std::thread(&UCXVan::PollUCX, this));
     reorder_thread_.reset(new std::thread(&UCXVan::ReorderMsg, this));
-
-    for (int i = 0; i < node.num_ports; ++i) {
-      contexts_[i]->Listen(node.ports[i]);
-    }
 
     return node.ports[0];
   }
