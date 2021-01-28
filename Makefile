@@ -43,7 +43,7 @@ INCPATH += -I$(FABRIC_PATH)/include
 endif
 
 ifeq ($(USE_UCX), 1)
-LIBS += -lucp -luct -lucs -lucm -lcudart
+LIBS += -lucp -luct -lucs -lucm
 CFLAGS += -DDMLC_USE_UCX
 endif
 
