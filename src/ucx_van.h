@@ -152,7 +152,7 @@ public:
       }
     }
 
-    UCX_LOGE(2, "ep create: connected to all ports of " << node.id);
+    UCX_LOGE(1, "ep create: connected to all ports of " << node.id);
   }
 
   void Create(UCXEp *ucx_ep) {
@@ -175,7 +175,7 @@ public:
     ucs_status_t status = ucp_ep_create(worker_, &ep_params, &ucx_ep->ep);
     CHECK_STATUS(status) << "ucp_ep_create failed: " << ucs_status_string(status);
 
-    UCX_LOGE(2, "ep created " << ucx_ep->ep << " id: " << ucx_ep->id);
+    UCX_LOGE(1, "ep created " << ucx_ep->ep << " id: " << ucx_ep->id);
 
     // UCX ep creation is a non-blocking routine. Exchange ep ids to ensure the
     // connection is setup and ready for use.
@@ -535,7 +535,7 @@ public:
     auto val = Environment::Get()->find("DMLC_NODE_HOST");
     struct sockaddr_in addr = {};
     if (val) {
-      UCX_LOGE(1, "bind to DMLC_NODE_HOST: " << std::string(val));
+      UCX_LOGE(1, "binding to DMLC_NODE_HOST: " << std::string(val));
       addr.sin_addr.s_addr = inet_addr(val);
     } else {
       addr.sin_addr.s_addr = INADDR_ANY;
@@ -597,7 +597,7 @@ public:
     ucp_ep_h ep    = ep_pool_.Find(id, dst_dev_id);
     ucp_tag_t stag = MakeTag(my_node_->id, tag, msg.meta.key);
 
-    UCX_LOGE(1, "Send to ep " << ep  << " (" << id << ", " << dst_dev_id << ")");
+    UCX_LOGE(2, "Send to ep " << ep  << " (" << id << ", " << dst_dev_id <<")");
 
     if (ep == nullptr) return UCS_STATUS_PTR(UCS_ERR_NOT_CONNECTED);
 
@@ -800,12 +800,13 @@ class UCXVan : public Van {
   int Bind(Node &node, int max_retry) override {
     contexts_.reserve(node.num_ports);
 
-    UCX_LOG(2, "Start/Bind UCX Van, num ports " << node.num_ports);
+    UCX_LOG(1, "Start/Bind UCX Van, num ports " << node.num_ports);
 
     // Create separate UCX context for every device. If device is GPU, set the
     // corresponding cuda device before UCX context creation. This way UCX will
     // automatically select the most optimal NICs for using with this device.
     for (int i = 0; i < node.num_ports; ++i) {
+      node.dev_ids[i] = i;
       int dev_id = node.dev_ids[i];
       CHECK_GE(dev_id, 0);
 
@@ -823,7 +824,7 @@ class UCXVan : public Van {
       contexts_[dev_id] = std::make_unique<UCXContext>(rx_pool_.get(), dev_id);
       contexts_[dev_id]->Init(&my_node_, this);
       contexts_[dev_id]->Listen(node.ports[i]);
-      UCX_LOG(2, "Create ctx[" << i << "]: dev id " << dev_id << ", port "
+      UCX_LOG(1, "Create ctx[" << i << "]: dev id " << dev_id << ", port "
               << node.ports[i]);
     }
 
@@ -935,8 +936,10 @@ class UCXVan : public Van {
               << src_dev_id);
     }
 
+    UCX_LOG(2, "before Send");
     ucs_status_ptr_t st = ContextById(src_dev_id)->Send(msg, buf, count, dt,
                                                         ps::Tags::UCX_TAG_META);
+    UCX_LOG(2, "after Send");
     if (UCS_PTR_IS_PTR(st)) {
       UCXRequest *req    = reinterpret_cast<UCXRequest*>(st);
       req->data.raw_meta = meta_buf;
