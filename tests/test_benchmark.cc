@@ -81,6 +81,22 @@ int dst_key2ctx(int key) {
   return dev_id;
 }
 
+int dst_key2ctx2(int key) {
+  int dev_id;
+  if (local_size == 0) {
+    dev_id = key % num_ports;
+  } else {
+    if (enable_cpu) {
+      int num_devices = local_size + 1;
+      dev_id = key % num_devices;
+      dev_id -= 1;
+    } else {
+      dev_id = key % local_size;
+    }
+  }
+  return dev_id;
+}
+
 void aligned_memory_alloc(void** ptr, size_t size, int device_idx, DeviceType device) {
   if (device == CPU) {
     // CPU Alloc
@@ -197,15 +213,16 @@ void GenerateVals(int total_key_num, int worker_rank,
     SArray<char> vals;
     // CPU only
     int src_dev_id = src_key2ctx(key + worker_rank);
-    int dst_dev_id = dst_key2ctx(key);
+    // int dst_dev_id = dst_key2ctx(key);
+    int dst_dev_id = dst_key2ctx2(key);
     if (local_size == 0) {
       // Normal all cpu unit test
       aligned_memory_alloc(&ptr, len, src_dev_id, CPU);
       vals.reset((char*) ptr, len * sizeof(char), [](void *){},
                  CPU, src_dev_id, CPU, dst_dev_id);
     } else {
-      CHECK(!enable_recv_buffer)
-        << "GPU test with registered recv buffer is not implemented yet";
+      // CHECK(!enable_recv_buffer)
+      //   << "GPU test with registered recv buffer is not implemented yet";
       DeviceType src_device = src_dev_id < 0 ? CPU : GPU;
       DeviceType dst_device = dst_dev_id < 0 ? CPU : GPU;
       aligned_memory_alloc(&ptr, len, src_dev_id, src_device);

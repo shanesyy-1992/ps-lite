@@ -38,12 +38,13 @@ export BYTEPS_UCX_SHORT_THRESH=0
 # export LOCAL_SIZE=1               # test ucx gdr
 #export CUDA_VISIBLE_DEVICES=0,1,2,3
 # export CUDA_VISIBLE_DEVICES=6,7
-export CUDA_VISIBLE_DEVICES=5,6
+export CUDA_VISIBLE_DEVICES=6,4,2,0
 #export UCX_IB_GPU_DIRECT_RDMA=no
 export UCX_IB_GPU_DIRECT_RDMA=yes
-export UCX_MAX_RNDV_RAILS=4
+# export UCX_MAX_RNDV_RAILS=4
 export UCX_IB_NUM_PATHS=2
 export UCX_IB_TRAFFIC_CLASS=236
+export UCX_NET_DEVICES=mlx5_2:1,mlx5_3:1
 
 export BYTEPS_ENABLE_IPC=0
 
@@ -58,7 +59,7 @@ then
     export UCX_RDMA_CM_SOURCE_ADDRESS=${NODE_ONE_IP}
     DMLC_ROLE=scheduler ./test_benchmark &
     # launch server
-    DMLC_ROLE=server ./test_benchmark 
+    DMLC_ROLE=server ./test_benchmark 4096000
 fi
 
 # launch worker, with 30MB data per push pull, 10000 rounds, push_then_pull mode
