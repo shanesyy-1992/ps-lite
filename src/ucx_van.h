@@ -597,7 +597,7 @@ public:
     ucp_ep_h ep    = ep_pool_.Find(id, dst_dev_id);
     ucp_tag_t stag = MakeTag(my_node_->id, tag, msg.meta.key);
 
-    UCX_LOGE(1, "Send to ep " << ep  << " (" << id << ", " << dst_dev_id);
+    UCX_LOGE(1, "Send to ep " << ep  << " (" << id << ", " << dst_dev_id << ")");
 
     if (ep == nullptr) return UCS_STATUS_PTR(UCS_ERR_NOT_CONNECTED);
 
