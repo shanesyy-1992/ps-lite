@@ -39,6 +39,9 @@ bool enable_recv_buffer = false;
 int local_size = 0;
 bool enable_cpu = 0;
 bool skip_dev_id_check = false;
+int num_gpu_server = 0;
+bool enable_cpu_server = 0;
+bool is_server = false;
 
 bool env2bool(const char* var, bool default_val) {
   auto env_str = Environment::Get()->find(var);
@@ -83,15 +86,15 @@ int dst_key2ctx(int key) {
 
 int dst_key2ctx2(int key) {
   int dev_id;
-  if (local_size == 0) {
+  if (num_gpu_server == 0) {
     dev_id = key % num_ports;
   } else {
-    if (enable_cpu) {
-      int num_devices = local_size + 1;
+    if (enable_cpu_server) {
+      int num_devices = num_gpu_server + 1;
       dev_id = key % num_devices;
       dev_id -= 1;
     } else {
-      dev_id = key % local_size;
+      dev_id = key % num_gpu_server;
     }
   }
   return dev_id;
@@ -153,6 +156,9 @@ void EmptyHandler(const KVMeta &req_meta, const KVPairs<Val> &req_data, KVServer
     auto recved = reinterpret_cast<char*>(req_data.vals.data());
 
     if (mem_map.find(key) == mem_map.end()) {
+      if (debug_mode_) {
+        LOG(INFO) << "recved tensor! key=" << key << "\t" << "not in mem_map";
+      }
       size_t len = (size_t) req_data.vals.size();
 
       void* ptr_val;
@@ -215,9 +221,13 @@ void GenerateVals(int total_key_num, int worker_rank,
     int src_dev_id = src_key2ctx(key + worker_rank);
     // int dst_dev_id = dst_key2ctx(key);
     int dst_dev_id = dst_key2ctx2(key);
-    if (local_size == 0) {
+
+    int dev_id = is_server ? dst_dev_id : src_dev_id;
+    int local_gpu_size = is_server ? num_gpu_server : local_size;
+
+    if (local_gpu_size == 0) {
       // Normal all cpu unit test
-      aligned_memory_alloc(&ptr, len, src_dev_id, CPU);
+      aligned_memory_alloc(&ptr, len, dev_id, CPU);
       vals.reset((char*) ptr, len * sizeof(char), [](void *){},
                  CPU, src_dev_id, CPU, dst_dev_id);
     } else {
@@ -225,7 +235,8 @@ void GenerateVals(int total_key_num, int worker_rank,
       //   << "GPU test with registered recv buffer is not implemented yet";
       DeviceType src_device = src_dev_id < 0 ? CPU : GPU;
       DeviceType dst_device = dst_dev_id < 0 ? CPU : GPU;
-      aligned_memory_alloc(&ptr, len, src_dev_id, src_device);
+      DeviceType dev_type = is_server ? dst_device : src_device;
+      aligned_memory_alloc(&ptr, len, dev_id, dev_type);
       vals.reset((char*) ptr, len * sizeof(char), [](void *){},
                  src_device, src_dev_id, dst_device, dst_dev_id);
     }
@@ -473,18 +484,32 @@ int main(int argc, char *argv[]) {
   } else {
     LOG(INFO) << "recv buffer registration is NOT enabled";
   }
-  local_size = env2int("LOCAL_SIZE", 0);
-  LOG(INFO) << "GPU LOCAL SIZE = " << local_size;
-  enable_cpu = env2bool("TEST_ENABLE_CPU", true);
-  CHECK(local_size || enable_cpu);
+  local_size = env2int("NUM_GPU_WORKER", 0);
+  LOG(INFO) << "NUM_GPU_WORKER = " << local_size;
+  enable_cpu = env2bool("ENABLE_CPU_WORKER", true);
+  auto val = Environment::Get()->find("DMLC_ROLE");
   skip_dev_id_check = env2bool("SKIP_DEV_ID_CHECK", false);
+
+  num_gpu_server = env2int("NUM_GPU_SERVER", 0);
+  LOG(INFO) << "NUM_GPU_SERVER = " << num_gpu_server;
+  enable_cpu_server = env2bool("ENABLE_CPU_SERVER", true);
+  std::string role(val);
+  is_server = role == std::string("server");
+  if (is_server) {
+    CHECK(num_gpu_server || enable_cpu_server);
+  } else {
+    CHECK(local_size || enable_cpu);
+  }
 
   // start system
   Start(0);
+  LOG(INFO) << "xxxxxxxxxxxxxxxxxx system started";
   // setup server nodes
   StartServer(argc, argv);
+  LOG(INFO) << "xxxxxxxxxxxxxxxxxx server started";
   // run worker nodes
   RunWorker(argc, argv);
+  LOG(INFO) << "xxxxxxxxxxxxxxxxxx worker started";
   // stop system
   Finalize(0, true);
   return 0;

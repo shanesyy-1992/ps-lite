@@ -515,6 +515,7 @@ public:
     w_params.thread_mode = UCS_THREAD_MODE_MULTI;
     status               = ucp_worker_create(context_, &w_params, &worker_);
     CHECK_STATUS(status) << "ucp_worker_create failed: " << ucs_status_string(status);
+    PS_VLOG(2) << "ucp_worker created ";
 
     // Check that UCX is compiled with multi-thread support
     ucp_worker_attr_t attr;
@@ -1073,9 +1074,10 @@ class UCXVan : public Van {
   }
 
   void PollUCX() {
-   UCX_LOG(2, "polling " << contexts_.size());
+   PS_VLOG(2) << "polling " << contexts_.size() << " ucp_contexts";
     while (!should_stop_.load()) {
       for (const auto& it : contexts_) {
+        PS_VLOG(3) << "inner polling context for local dev_id " << it.first;
         it.second->Poll();
       }
     }
