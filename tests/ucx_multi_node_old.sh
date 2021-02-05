@@ -47,7 +47,7 @@ export CUDA_VISIBLE_DEVICES=6,4,2,0
 #export UCX_IB_GPU_DIRECT_RDMA=no
 export UCX_IB_GPU_DIRECT_RDMA=yes
 # export UCX_MAX_RNDV_RAILS=4
-export UCX_IB_NUM_PATHS=2
+export UCX_IB_NUM_PATHS=1
 export UCX_IB_TRAFFIC_CLASS=236
 # export UCX_NET_DEVICES=mlx5_2:1,mlx5_3:1
 
@@ -64,7 +64,7 @@ then
     export UCX_RDMA_CM_SOURCE_ADDRESS=${NODE_ONE_IP}
     DMLC_ROLE=scheduler ./test_benchmark &
     # launch server
-    # DMLC_ROLE=server ./test_benchmark 4096000
+    DMLC_ROLE=server ./test_benchmark 4096000
     exit 0
 fi
 

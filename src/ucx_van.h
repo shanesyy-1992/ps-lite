@@ -428,12 +428,14 @@ public:
     CHECK(buf);
     memset(buf, 0, size);
     rpool_[key][node_id] = UCXAddress(buf, size, false);
+    PS_VLOG(1) << "xxxx allocated new ptr  rpool_[" << key << "][" << node_id << "] = "
+	     << (long long)buf;
 
     return buf;
   }
 
   void Register(Message &msg) {
-    uint64_t key = msg.meta.key;
+    uint64_t key = *((uint64_t *) msg.data[0].data());
     int sender   = msg.meta.sender;
 
     if (rpool_.find(key) != rpool_.end()) {
@@ -446,6 +448,9 @@ public:
     }
 
     rpool_[key][sender] = UCXAddress(msg.data[1].data(), msg.data[1].size(), true);
+    // PS_VLOG(1) << "xxxx registered rpool_[" << key << "][" << sender << "]";
+    PS_VLOG(1) << "xxxx registered rpool_[" << key << "][" << sender << "] = "
+	     << (long long)msg.data[1].data();
   }
 
   void Push(UCXBuffer &data) {

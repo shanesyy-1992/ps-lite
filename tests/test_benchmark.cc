@@ -115,8 +115,11 @@ void aligned_memory_alloc(void** ptr, size_t size, int device_idx, DeviceType de
     CHECK(device == GPU);
 #if DMLC_USE_CUDA
     // GPU Alloc, malloc should automatically gives page aligned.
+    LOG(INFO) << "xxxxxx cudaSetDevice(" << device_idx << ")";
     CUDA_CALL(cudaSetDevice(device_idx));
+    LOG(INFO) << "xxxxxx cudaMalloc(" << size << ")";
     CUDA_CALL(cudaMalloc(ptr, size));
+    LOG(INFO) << "xxxxxx cudaMalloc(" << size << ") done";
 #else
     CHECK(false) << "Please build with USE_CUDA=1";
 #endif
@@ -125,6 +128,7 @@ void aligned_memory_alloc(void** ptr, size_t size, int device_idx, DeviceType de
 
 
 void float_sum(float *dst, float *src, size_t len) {
+	return;
   if (len == 0) return;
   for (size_t i = 0; i < len / (size_t) sizeof(float); ++i) {
     dst[i] = dst[i] + src[i];
@@ -236,6 +240,7 @@ void GenerateVals(int total_key_num, int worker_rank,
       DeviceType src_device = src_dev_id < 0 ? CPU : GPU;
       DeviceType dst_device = dst_dev_id < 0 ? CPU : GPU;
       DeviceType dev_type = is_server ? dst_device : src_device;
+      LOG(INFO) << "xxxxxx key " << key << " dev_id " << dev_id;
       aligned_memory_alloc(&ptr, len, dev_id, dev_type);
       vals.reset((char*) ptr, len * sizeof(char), [](void *){},
                  src_device, src_dev_id, dst_device, dst_dev_id);
@@ -294,7 +299,10 @@ void StartServer(int argc, char *argv[]) {
   const int total_key_num = num_servers * how_many_key_per_server;
   int len = (argc > 1) ? atoi(argv[1]) : 1024000;
 
+  LOG(INFO) << "xxxx num_workers: " << num_workers;
   for (int worker_rank = 0; worker_rank < num_workers; worker_rank++) {
+    LOG(INFO) << "xxxx worker_rank: " << worker_rank << " total_key_num " <<
+      total_key_num;
     std::vector<SArray<char>> server_vals;
     std::vector<SArray<Key>> server_keys;
     std::vector<SArray<int>> server_lens;
@@ -302,14 +310,23 @@ void StartServer(int argc, char *argv[]) {
     GenerateKeys(total_key_num, &server_keys);
     GenerateLens(total_key_num, len, &server_lens);
     for (int key = 0; key < total_key_num; ++key) {
+      LOG(INFO) << "xxxx key: " << key << " num_servers " << num_servers
+        << " my_rank " << my_rank;
       if (my_rank == (key % num_servers)) {
         int worker_id = ps::Postoffice::Get()->WorkerRankToID(worker_rank);
+        LOG(INFO) << "Registering buffers for worker_rank=" << worker_rank
+          << " worker_id " << worker_id;
+
         server->RegisterRecvBuffer(worker_id, server_keys[key], server_vals[key],
                                    server_lens[key]);
         registered_buffs[worker_id][key] = server_vals[key];
+        LOG(INFO) << "Registered buffer for worker_rank=" << worker_rank
+          << " worker_id " << worker_id << " key " << key << " ptr "
+	  << (long long) server_vals[key].data();
       }
     }
   }
+  LOG(INFO) << "server rank=" << my_rank << " entering barrier ";
   ps::Postoffice::Get()->Barrier(0, kWorkerGroup + kServerGroup);
 }
 
