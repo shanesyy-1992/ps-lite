@@ -320,6 +320,14 @@ void StartServer(int argc, char *argv[]) {
         server->RegisterRecvBuffer(worker_id, server_keys[key], server_vals[key],
                                    server_lens[key]);
         registered_buffs[worker_id][key] = server_vals[key];
+
+	// mem_map[key].keys.reset(server_keys[key], 1, [](void *){ });
+	mem_map[key].keys = server_keys[key];
+        // mem_map[key].vals.reset(server_vals[key], len * sizeof(char), [](void *){ });
+        mem_map[key].vals = server_vals[key];
+	// mem_map[key].lens.reset(server_lens[key], 1, [](void *){ });
+	mem_map[key].lens = server_lens[key];
+
         LOG(INFO) << "Registered buffer for worker_rank=" << worker_rank
           << " worker_id " << worker_id << " key " << key << " ptr "
 	  << (long long) server_vals[key].data();
@@ -501,15 +509,15 @@ int main(int argc, char *argv[]) {
   } else {
     LOG(INFO) << "recv buffer registration is NOT enabled";
   }
-  local_size = env2int("NUM_GPU_WORKER", 0);
-  LOG(INFO) << "NUM_GPU_WORKER = " << local_size;
-  enable_cpu = env2bool("ENABLE_CPU_WORKER", true);
+  local_size = env2int("TEST_NUM_GPU_WORKER", 0);
+  LOG(INFO) << "TEST_NUM_GPU_WORKER = " << local_size;
+  enable_cpu = env2int("TEST_NUM_CPU_WORKER", 1);
   auto val = Environment::Get()->find("DMLC_ROLE");
   skip_dev_id_check = env2bool("SKIP_DEV_ID_CHECK", false);
 
-  num_gpu_server = env2int("NUM_GPU_SERVER", 0);
-  LOG(INFO) << "NUM_GPU_SERVER = " << num_gpu_server;
-  enable_cpu_server = env2bool("ENABLE_CPU_SERVER", true);
+  num_gpu_server = env2int("TEST_NUM_GPU_SERVER", 0);
+  LOG(INFO) << "TEST_NUM_GPU_SERVER = " << num_gpu_server;
+  enable_cpu_server = env2int("TEST_NUM_CPU_SERVER", 1);
   std::string role(val);
   is_server = role == std::string("server");
   if (is_server) {
