@@ -1,122 +1,50 @@
-This is the communication library for [BytePS](https://github.com/bytedance/byteps). It is designed for high performance RDMA. However, it also supports TCP.
+Follow the steps below to reproduce the test result:
 
-## Build
+## Code Prepare
 
-```bash
-git clone -b byteps https://github.com/bytedance/ps-lite
-cd ps-lite 
-make -j USE_RDMA=1 USE_FABRIC=1
+ps-lite code: use current branch
+
+ucx code: https://github.com/openucx/ucx/tree/7125ef17e69a54716076954fa286f3628959c9e0
+
+## Install Dependencies
+```
+apt update
+apt install -y build-essential libtool autoconf automake libnuma-dev unzip pkg-config
+apt install -y libibverbs-dev librdmacm-dev ibverbs-providers
 ```
 
-Remove `USE_RDMA=1` if you don't want to build with RDMA ibverbs support.
-Remove `USE_FABRIC=1` if you don't want to build with RDMA libfabric support for AWS Elastic Fabric Adaptor.
+## Build UCX
 
-## Concepts
-
-In ps-lite, there are three roles: worker, server and scheduler. Each role is an independent process.
-
-The scheduler is responsible for setting up the connections between workers and servers at initialization. There should be only 1 scheduler process.
-
-A worker process only communicates with server processes, and vice versa. There won't be any traffic between worker-to-worker, and server-to-server.
-
-
-## Tutorial
-
-After build, you will have two testing applications under `tests/` dir, namely `test_benchmark` and `test_ipc_benchmark`. 
-Below we elaborate how you can run with them. 
-
-To debug, set `PS_VERBOSE=1` to see important log during connection setup, and `PS_VERBOSE=2` to see each message log. 
-
-### 1. Basic benchmark
-
-Suppose you want to run with 1 worker and 1 server on different machines. Therefore, we need to launch 3 processes in total (including the scheduler). You can launch the scheduler process at any machine as it does not affect the performance.
-
-For the scheduler:
+Get into UCX directory and 
 
 ```
-# common setup
-export DMLC_ENABLE_RDMA=ibverbs
-export DMLC_NUM_WORKER=1
-export DMLC_NUM_SERVER=1 
-export DMLC_PS_ROOT_URI=10.0.0.2  # scheduler's RDMA interface IP 
-export DMLC_PS_ROOT_PORT=8123     # scheduler's port (can random choose)
-export DMLC_INTERFACE=eth5        # my RDMA interface 
-
-# launch scheduler
-DMLC_ROLE=scheduler ./tests/test_benchmark
+./autogen.sh || ./autogen.sh && ./contrib/configure-release --enable-profiling --enable-frame-pointer --enable-debug-data --enable-memtrack --enable-logging --enable-mt --prefix=${UCX_HOME} && make clean && make && sudo make install;
 ```
 
+## Build ps-lite
 
-For the server:
+Get into ps-lite directory and 
 ```
-# common setup
-export DMLC_ENABLE_RDMA=ibverbs
-export DMLC_NUM_WORKER=1
-export DMLC_NUM_SERVER=1 
-export DMLC_PS_ROOT_URI=10.0.0.2  # scheduler's RDMA interface IP 
-export DMLC_PS_ROOT_PORT=8123     # scheduler's port (can random choose)
-export DMLC_INTERFACE=eth5        # my RDMA interface 
-
-# launch server
-DMLC_ROLE=server ./tests/test_benchmark
+rm -rf deps
+make clean
+export USE_UCX=1
+export USE_RDMA=1
+make VERBOSE=1 ADD_CFLAGS="-I${UCX_HOME}/include -L${UCX_HOME}/lib"
 ```
 
-For the worker:
+## Run ps-lite test
+
+Get into ps-lite directory and
 ```
-# common setup
-export DMLC_ENABLE_RDMA=ibverbs
-export DMLC_NUM_WORKER=1
-export DMLC_NUM_SERVER=1 
-export DMLC_PS_ROOT_URI=10.0.0.2  # scheduler's RDMA interface IP 
-export DMLC_PS_ROOT_PORT=8123     # scheduler's port (can random choose)
-export DMLC_INTERFACE=eth5        # my RDMA interface 
+export NODE_ONE_IP={YOUR_SERVER_IP}
+export NODE_TWO_IP={YOUR_WORKER_IP}
+export LD_LIBRARY_PATH=${UCX_HOME}/lib:$LD_LIBRARY_PATH
 
-# launch worker
-DMLC_ROLE=worker ./tests/test_benchmark
+cd tests
+
+# launch server:
+DMLC_NUM_PORTS=1 SKIP_DEV_ID_CHECK=1 LOCAL_SIZE=0 taskset -c 0-31 bash ./ucx_multi_node_old.sh
+
+# launch worker:
+DMLC_NUM_PORTS=1 SKIP_DEV_ID_CHECK=1 LOCAL_SIZE=0 TEST_ENABLE_CPU=1 taskset -c 0-31 ./ucx_multi_node_old.sh {TEST_MSG_SIZE}
 ```
-
-If you want to use libfabric with Amazon Elastic Fabric Adaptor, make sure to set `DMLC_ENABLE_RDMA=fabric` for all processes. If you are
-using libfabric < 1.10, please also set `FI_EFA_ENABLE_SHM_TRANSFER=0` to avoid a bug in the EFA shm provider.
-
-If you just want to use TCP, make sure to unset `DMLC_ENABLE_RDMA` for all processes.
-
-### 2. Benchmark with IPC support
-
-The `test_ipc_benchmark` demonstrates how inter-process communication (IPC) helps improve RDMA performance when the server is co-located with the worker.
-
-Suppose you have two machines. Each machine should launch a worker and a server process. 
-
-For the scheduler: 
-(you can launch it on either machine-0 or machine-1)
-```
-# common setup
-export DMLC_ENABLE_RDMA=ibverbs
-export DMLC_NUM_WORKER=2
-export DMLC_NUM_SERVER=2 
-export DMLC_PS_ROOT_URI=10.0.0.2  # scheduler's RDMA interface IP 
-export DMLC_PS_ROOT_PORT=8123     # scheduler's port (can random choose)
-export DMLC_INTERFACE=eth5        # my RDMA interface 
-
-# launch scheduler
-DMLC_ROLE=scheduler ./tests/test_ipc_benchmark
-```
-
-For machine-0 and machine-1:
-
-```
-# common setup
-export DMLC_ENABLE_RDMA=ibverbs
-export DMLC_NUM_WORKER=2
-export DMLC_NUM_SERVER=2 
-export DMLC_PS_ROOT_URI=10.0.0.2  # scheduler's RDMA interface IP 
-export DMLC_PS_ROOT_PORT=8123     # scheduler's port (can random choose)
-export DMLC_INTERFACE=eth5        # my RDMA interface 
-
-# launch server and worker
-DMLC_ROLE=server ./tests/test_ipc_benchmark &
-DMLC_ROLE=worker ./tests/test_ipc_benchmark 
-```
-
-
-Note: This benchmark is only valid for RDMA. 
-

@@ -24,7 +24,7 @@ export DMLC_NUM_SERVER=1
 # export NODE_TWO_IP=10.0.0.2 # worker
 
 export DMLC_PS_ROOT_URI=${NODE_ONE_IP}  # try eth2
-export BYTEPS_ORDERED_HOSTS=${NODE_ONE_IP},${NODE_TWO_IP}
+#export BYTEPS_ORDERED_HOSTS=${NODE_ONE_IP},${NODE_TWO_IP}
 export DMLC_NODE_HOST=${NODE_TWO_IP}  # by default it's remote
 export UCX_RDMA_CM_SOURCE_ADDRESS=${NODE_TWO_IP}
 
@@ -44,13 +44,15 @@ export BYTEPS_UCX_SHORT_THRESH=0
 #export CUDA_VISIBLE_DEVICES=0,1,2,3
 # export CUDA_VISIBLE_DEVICES=6,7
 # export CUDA_VISIBLE_DEVICES=6,4,2,0
-export CUDA_VISIBLE_DEVICES=2,6,4,0
+#export CUDA_VISIBLE_DEVICES=2,6,4,0
 #export UCX_IB_GPU_DIRECT_RDMA=no
-export UCX_IB_GPU_DIRECT_RDMA=yes
-# export UCX_MAX_RNDV_RAILS=4
+#export UCX_IB_GPU_DIRECT_RDMA=yes
+export UCX_MAX_RNDV_RAILS=4
 export UCX_IB_NUM_PATHS=1
 export UCX_IB_TRAFFIC_CLASS=236
-# export UCX_NET_DEVICES=mlx5_2:1,mlx5_3:1
+export UCX_NET_DEVICES=mlx5_0:1
+
+export NUM_KEY_PER_SERVER=1
 
 export BYTEPS_ENABLE_IPC=0
 
@@ -74,7 +76,7 @@ fi
 # push only
 # DMLC_ROLE=worker BENCHMARK_NTHREAD=1 ./test_benchmark  4096000 1024000 2
 # push_pull
-DMLC_ROLE=worker BENCHMARK_NTHREAD=1 ./test_benchmark  4096000 1024000 1
+DMLC_ROLE=worker BENCHMARK_NTHREAD=1 ./test_benchmark $1 1024000 2
 
 # for correctness test, use this following line and replace previous
 # scheduler / server binary with ./test_correctness
